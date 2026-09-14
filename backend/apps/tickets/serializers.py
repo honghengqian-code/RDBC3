@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db.models import Q
 from rest_framework import serializers
 
 from apps.tickets.models import Attachment, Client, Response, Ticket
@@ -32,6 +33,28 @@ def create_attachments(files: list, *, ticket=None, response=None) -> None:
             size=f.size,
             content_type=f.content_type or "",
         )
+
+
+def delete_ticket_attachments(ticket) -> int:
+    """Removes attachment files from storage before a ticket is deleted.
+
+    CASCADE clears the Attachment/Response DB rows automatically once the
+    Ticket is deleted, but Django never touches the underlying files on a
+    cascade delete — those have to be removed explicitly, or they're
+    orphaned on disk forever.
+    """
+    attachments = Attachment.objects.filter(Q(ticket=ticket) | Q(response__ticket=ticket))
+    count = 0
+    for attachment in attachments:
+        attachment.file.delete(save=False)
+        count += 1
+    return count
+
+
+class TicketBulkDeleteSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=False, max_length=500
+    )
 
 
 class AttachmentSerializer(serializers.ModelSerializer):

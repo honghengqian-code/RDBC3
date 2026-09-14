@@ -23,9 +23,11 @@ from apps.tickets.serializers import (
     TicketAdminDetailSerializer,
     TicketAdminListSerializer,
     TicketAdminUpdateSerializer,
+    TicketBulkDeleteSerializer,
     TicketCreateSerializer,
     TicketPublicSerializer,
     create_attachments,
+    delete_ticket_attachments,
 )
 from apps.tickets.utils import extract_ticket_token, looks_like_email
 
@@ -229,7 +231,7 @@ class AdminTicketListView(generics.ListAPIView):
         return Ticket.objects.select_related("client").all()
 
 
-class AdminTicketDetailView(generics.RetrieveUpdateAPIView):
+class AdminTicketDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Ticket.objects.select_related("client").prefetch_related("responses")
     permission_classes = [IsAdminUser]
     lookup_field = "id"
@@ -250,6 +252,37 @@ class AdminTicketDetailView(generics.RetrieveUpdateAPIView):
             "Ticket updated id=%s status=%s priority=%s", ticket.id, ticket.status, ticket.priority
         )
         return DRFResponse(TicketAdminDetailSerializer(ticket, context={"request": request}).data)
+
+    def perform_destroy(self, instance):
+        ticket_id = instance.id
+        removed_files = delete_ticket_attachments(instance)
+        instance.delete()
+        logger.info("Ticket deleted id=%s attachments_removed=%d", ticket_id, removed_files)
+
+
+class AdminTicketBulkDeleteView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        serializer = TicketBulkDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ids = serializer.validated_data["ids"]
+
+        tickets = list(Ticket.objects.filter(id__in=ids))
+        removed_files = 0
+        deleted_ids = []
+        for ticket in tickets:
+            removed_files += delete_ticket_attachments(ticket)
+            deleted_ids.append(ticket.id)
+            ticket.delete()
+
+        logger.info(
+            "Bulk ticket delete requested=%d deleted=%d attachments_removed=%d",
+            len(ids),
+            len(deleted_ids),
+            removed_files,
+        )
+        return DRFResponse({"deleted": len(deleted_ids)})
 
 
 class AdminTicketResponseCreateView(APIView):

@@ -241,3 +241,72 @@ class AdminAuthAndUpdateTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.ticket.refresh_from_db()
         self.assertIsNone(self.ticket.resolved_at)
+
+
+class AdminTicketDeleteTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin", email="admin@example.com", password="s3cret-pass", is_staff=True
+        )
+        self.client_obj = Client.objects.create(name="Ada Lovelace", email="ada@example.com")
+
+    def _ticket_with_attachment(self, title="Something broke"):
+        ticket = Ticket.objects.create(
+            client=self.client_obj, title=title, description="Details here."
+        )
+        upload = SimpleUploadedFile("notes.txt", b"fix notes", content_type="text/plain")
+        response_obj = Response.objects.create(
+            ticket=ticket, author_type=Response.AuthorType.ADMIN, message="Working on it."
+        )
+        attachment = Attachment.objects.create(
+            response=response_obj, file=upload, original_name="notes.txt", size=9,
+            content_type="text/plain",
+        )
+        return ticket, attachment
+
+    def test_unauthenticated_cannot_delete_ticket(self):
+        ticket, _ = self._ticket_with_attachment()
+        url = reverse("admin-ticket-detail", kwargs={"id": str(ticket.id)})
+        resp = self.client.delete(url)
+        self.assertIn(resp.status_code, (401, 403))
+        self.assertTrue(Ticket.objects.filter(id=ticket.id).exists())
+
+    def test_delete_removes_ticket_responses_and_attachment_file(self):
+        from django.core.files.storage import default_storage
+
+        self.client.login(username="admin", password="s3cret-pass")
+        ticket, attachment = self._ticket_with_attachment()
+        file_name = attachment.file.name
+        self.assertTrue(default_storage.exists(file_name))
+
+        url = reverse("admin-ticket-detail", kwargs={"id": str(ticket.id)})
+        resp = self.client.delete(url)
+        self.assertEqual(resp.status_code, 204, resp.content)
+        self.assertFalse(Ticket.objects.filter(id=ticket.id).exists())
+        self.assertFalse(Response.objects.filter(ticket_id=ticket.id).exists())
+        self.assertFalse(Attachment.objects.filter(id=attachment.id).exists())
+        self.assertFalse(default_storage.exists(file_name))
+
+    def test_bulk_delete_removes_selected_tickets_only(self):
+        self.client.login(username="admin", password="s3cret-pass")
+        ticket_a, _ = self._ticket_with_attachment("First ticket")
+        ticket_b, _ = self._ticket_with_attachment("Second ticket")
+        ticket_c, _ = self._ticket_with_attachment("Third ticket")
+
+        url = reverse("admin-ticket-bulk-delete")
+        resp = self.client.post(
+            url,
+            {"ids": [str(ticket_a.id), str(ticket_b.id)]},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["deleted"], 2)
+        self.assertFalse(Ticket.objects.filter(id=ticket_a.id).exists())
+        self.assertFalse(Ticket.objects.filter(id=ticket_b.id).exists())
+        self.assertTrue(Ticket.objects.filter(id=ticket_c.id).exists())
+
+    def test_bulk_delete_rejects_empty_ids(self):
+        self.client.login(username="admin", password="s3cret-pass")
+        url = reverse("admin-ticket-bulk-delete")
+        resp = self.client.post(url, {"ids": []}, content_type="application/json")
+        self.assertEqual(resp.status_code, 400)

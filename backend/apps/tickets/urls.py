@@ -26,6 +26,11 @@ admin_auth_urlpatterns = [
 
 admin_urlpatterns = [
     path("tickets/", views.AdminTicketListView.as_view(), name="admin-ticket-list"),
+    path(
+        "tickets/bulk-delete/",
+        views.AdminTicketBulkDeleteView.as_view(),
+        name="admin-ticket-bulk-delete",
+    ),
     path("tickets/<uuid:id>/", views.AdminTicketDetailView.as_view(), name="admin-ticket-detail"),
     path(
         "tickets/<uuid:id>/responses/",
