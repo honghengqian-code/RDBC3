@@ -181,6 +181,11 @@ src/
 │   ├── tickets/
 │   │   └── [token]/
 │   │       └── page.tsx               # "/tickets/[token]" — Ticket Status Page
+│   ├── track/
+│   │   ├── page.tsx                   # "/track" — email/ticket-ID/link entry
+│   │   └── [verifyToken]/
+│   │       └── page.tsx               # "/track/[verifyToken]" — read-only list of every
+│   │                                   #   ticket for the verified email
 │   └── admin/
 │       ├── layout.tsx                 # admin shell (nav, auth guard)
 │       ├── login/
@@ -197,13 +202,18 @@ src/
 │   ├── landing/
 │   │   ├── NavBar.tsx                 # Home / Report Issue / Track Ticket + Admin Login
 │   │   ├── Hero.tsx
-│   │   ├── TicketLookupCard.tsx       # email-or-token lookup box ("Track Your Ticket")
 │   │   ├── HowItWorks.tsx
 │   │   ├── Features.tsx
 │   │   └── Footer.tsx
 │   ├── report/
 │   │   ├── IncidentForm.tsx           # RHF + Zod form
 │   │   └── AttachmentUploader.tsx
+│   ├── track/
+│   │   ├── TrackEntryForm.tsx         # email, ticket ID, or ticket link — see 2.2
+│   │   ├── TrackedTicketsView.tsx     # resolves a verify token, shows the list or an
+│   │   │                               #   expired/invalid state
+│   │   └── TrackedTicketsTable.tsx    # read-only — StatusBadge/PriorityBadge, no quick-edit;
+│   │                                   #   rows link to "/tickets/[token]"
 │   ├── ticket-status/
 │   │   ├── StatusBadge.tsx
 │   │   ├── TicketTimeline.tsx
@@ -262,28 +272,46 @@ filter state can live in the URL (`searchParams`) so views are shareable/
 bookmarkable.
 
 #### Landing Page (`/`)
-- **Components:** `NavBar`, `Hero`, `TicketLookupCard`, `HowItWorks`, `Features`, `Footer`.
-- **Nav:** Home, Report Issue (→ `/report`), Track Ticket (→ `#track` on this page),
-  and a de-emphasized Admin Login (→ `/admin/login`) — repeated in the footer.
+- **Components:** `NavBar`, `Hero`, `HowItWorks`, `Features`, `Footer`.
+- **Nav:** Home, Report Issue (→ `/report`), Track Ticket (→ `/track`), and a
+  de-emphasized Admin Login (→ `/admin/login`) — repeated in the footer.
 - **Hero:** states the core pitch plainly — "Report incidents instantly. No
   account registration required." — plus a one-line explanation of the
   token-link model.
-- **Two primary action cards** side by side below the hero:
-  1. **Report an Incident** — copy + CTA button linking to `/report`.
-  2. **Track Your Ticket** (`TicketLookupCard`) — an input accepting either an
-     email or a ticket token, plus a submit action. Behavior differs by what
-     was entered, and this distinction matters for privacy (see 3.3):
-     - **Looks like a token:** resolve straight to `/tickets/[token]`.
-     - **Looks like an email:** never reveal or navigate directly — show a
-       neutral "if this email has tickets, we've sent tracking links to that
-       inbox" message. Enumerating a stranger's tickets by guessing emails
-       must not be possible.
-     - **Neither:** inline validation error.
+- **Two primary action cards** side by side below the hero, both simple CTAs
+  (copy + button) rather than embedded forms — the actual interaction lives
+  on the destination page, not duplicated here:
+  1. **Report an Incident** — links to `/report`.
+  2. **Track Your Ticket** — links to `/track` (see below).
 - **How it works:** a lightweight 3-step strip (Report → Get your link →
   Track & reply) reusing the same step/connector visual language as the
   Ticket Status Page's timeline, for consistency across the product.
 - **Feature highlights:** three columns — instant email notifications, direct
   token link access, real-time status tracking.
+
+#### Track Ticket Page (`/track`, `/track/[verifyToken]`)
+- **Components:** `TrackEntryForm`, `TrackedTicketsView`, `TrackedTicketsTable`.
+- **Entry (`/track`):** one input accepting an email, a bare ticket ID, or a
+  full ticket link (e.g. pasted straight from the confirmation email) — same
+  parsing either way, extracting a token out of a URL if one was pasted.
+  Behavior differs by what was entered, and this distinction matters for
+  privacy (see 3.3):
+  - **Looks like a token (bare, or extracted from a pasted URL):** resolve
+    straight to `/tickets/[token]` — the token is itself the credential.
+  - **Looks like an email:** never list or navigate directly. Request a
+    one-time verification link via `POST /api/public/tickets/lookup/` and
+    show a neutral "check your email" confirmation — the same response
+    whether or not that address has any tickets, so this can't be used to
+    enumerate who has filed one.
+  - **Neither:** inline validation error.
+- **Verified list (`/track/[verifyToken]`):** `TrackedTicketsView` resolves
+  the token via `GET /api/public/tickets/track/<verify_token>/`; on success,
+  `TrackedTicketsTable` lists every ticket for that email — visually similar
+  to the admin dashboard's ticket table (same `StatusBadge`/`PriorityBadge`),
+  but **read-only**: no quick-edit selects, since this is the client's own
+  view, not an admin's. Clicking a row (or its title) navigates to that
+  ticket's `/tickets/[token]`. An expired or invalid token shows a "link
+  expired, request a new one" state instead of an error.
 
 #### Incident Reporting Page (`/report`)
 - **Component:** `IncidentForm.tsx` (client component).
@@ -457,14 +485,24 @@ required for MVP schema lock-in.
   without a token.
 - Tokens are UUIDv4 — not guessable, not sequential. No expiry in MVP; revisit
   if the brief requires link expiration later.
-- The landing page's "Track Your Ticket" lookup accepts either a token or an
-  email, but the two must behave asymmetrically: a token is itself the
-  credential, so a valid one may resolve straight to `/tickets/<token>`. An
-  email is **not** a credential — it must never directly return or confirm
-  which tickets exist for that address (that would let anyone enumerate a
-  stranger's tickets by trying emails). The email path always responds with
-  the same neutral message and, if a match exists, re-sends that ticket's
-  link by email instead of returning it in the API response.
+- The `/track` lookup accepts a token (bare, or extracted from a pasted
+  ticket URL), or an email — the two must behave asymmetrically. A token is
+  itself the credential, so a valid one may resolve straight to
+  `/tickets/<token>`. An email is **not** a credential:
+  - It must never directly return, list, or confirm which tickets exist for
+    that address — that would let anyone enumerate a stranger's tickets by
+    trying emails. `POST /api/public/tickets/lookup/` always returns the same
+    generic response regardless of whether the address has any tickets.
+  - Instead, it emails a **one-time verification link** —
+    `/track/<verify_token>` — that only the inbox owner can open. Visiting it
+    calls `GET /api/public/tickets/track/<verify_token>/`, which resolves the
+    token server-side to an email and returns every ticket filed under it.
+    The verify token is short-lived (15 min) and single-purpose: it only ever
+    resolves to an email address, never doubles as a login session.
+  - Implementation note: this doesn't need a full model — a signed,
+    timestamped token (e.g. Django's `django.core.signing.TimestampSigner`
+    wrapping the email, or a minimal `EmailVerification(token, email,
+    expires_at)` row if signing alone feels too opaque to debug) is enough.
 
 ### 3.4 API Endpoint Contracts
 
@@ -474,7 +512,8 @@ required for MVP schema lock-in.
 | POST | `/api/public/tickets/` | Create a ticket (name, email, title, description, attachments). Returns ticket incl. `token`. Triggers confirmation email. |
 | GET | `/api/public/tickets/<token>/` | Fetch one ticket + its responses, by token. 404 if token invalid. |
 | POST | `/api/public/tickets/<token>/responses/` | Client reply: add a `Response` with `author_type=Client` to their own ticket, resolved by token (never by id/login). Triggers a notification email to the admin(s) watching the ticket. |
-| POST | `/api/public/tickets/lookup/` | Landing-page "Track Your Ticket" lookup. Body: `{ query }`. If `query` matches a `Ticket.token`, returns `{ redirect: "/tickets/<token>" }`. Otherwise (treated as an email) always returns the same generic `{ status: "ok" }` and, only if a match exists, re-sends that ticket's link by email — never confirms existence or returns ticket data in the response. |
+| POST | `/api/public/tickets/lookup/` | `/track` entry lookup. Body: `{ query }`. If `query` matches a `Ticket.token` (bare or extracted from a pasted ticket URL), returns `{ redirect: "/tickets/<token>" }`. Otherwise (treated as an email) always returns the same generic `{ status: "ok" }` and emails a one-time link to `/track/<verify_token>` — never confirms existence or returns ticket data in the response itself. |
+| GET | `/api/public/tickets/track/<verify_token>/` | Resolves a verification token to its email (404/expired if invalid or past 15 min) and returns every `Ticket` filed under that email — title, token, status, priority, `created_at`. This is the only public endpoint that returns more than one ticket at a time, which is exactly why it's gated behind the verify token rather than a bare query param. |
 
 **Admin auth — prefix `/api/admin/auth/`** (unauthenticated)
 | Method | Path | Purpose |
@@ -514,6 +553,10 @@ the client token scheme and must never accept a `Ticket.token` as credential.
      (e.g. `settings.ADMIN_NOTIFICATION_EMAILS`, or whoever the ticket is
      assigned to once assignment exists) that the client replied, linking to
      the admin ticket view.
+  5. **On `POST /api/public/tickets/lookup/` with an email:** send that
+     address the one-time `/track/<verify_token>` link (see 3.3) — sent
+     unconditionally, whether or not the address has any tickets, so the
+     email itself can't be used to infer that either way.
 - Implementation: Django's built-in `django.core.mail.send_mail`, backed by
   console backend in dev and SMTP (or a provider) in deployment, configured via
   env vars — no email content templates committed with real credentials.

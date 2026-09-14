@@ -357,10 +357,6 @@ h3 {
   animation: pulse 1.8s ease-in-out infinite;
 }
 
-#track {
-  scroll-margin-top: 5.5rem;
-}
-
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

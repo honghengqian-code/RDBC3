@@ -1,4 +1,12 @@
-import { appendResponse, findResponses, findTicket } from "@/lib/mock/ticket-store";
+import { generateId } from "@/lib/mock/generate-id";
+import {
+  appendResponse,
+  createVerification,
+  findResponses,
+  findTicket,
+  findTicketsByEmail,
+  resolveVerification,
+} from "@/lib/mock/ticket-store";
 import type { Ticket, TicketResponse } from "@/lib/types/ticket";
 
 const TICKET_DOMAIN = "https://helpdesk.example.com";
@@ -16,20 +24,11 @@ export interface CreateTicketResult {
   link: string;
 }
 
-function generateToken(): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 // Stands in for POST /api/public/tickets/ (multipart, incl. attachments) until the Django backend exists.
 export async function createTicket(input: CreateTicketInput): Promise<CreateTicketResult> {
   void input;
   await new Promise((resolve) => setTimeout(resolve, 900));
-  const token = generateToken();
+  const token = generateId();
   return { token, link: `${TICKET_DOMAIN}/tickets/${token}` };
 }
 
@@ -60,4 +59,35 @@ export async function addTicketResponse(token: string, message: string): Promise
   };
   appendResponse(token, response);
   return response;
+}
+
+export interface RequestTrackingLinkResult {
+  status: "ok";
+  /**
+   * Dev-only convenience: the direct verification URL, since there's no real email backend yet.
+   * A production response must never include this — the link only ever reaches the real inbox.
+   */
+  devVerifyUrl?: string;
+}
+
+// Stands in for POST /api/public/tickets/lookup/ until the Django backend exists. Always
+// returns the same shape regardless of whether the email has any tickets, so this can't be
+// used to enumerate which addresses have filed tickets.
+export async function requestTrackingLink(email: string): Promise<RequestTrackingLinkResult> {
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const verifyToken = createVerification(email);
+  return { status: "ok", devVerifyUrl: `/track/${verifyToken}` };
+}
+
+export interface TrackedTicketList {
+  email: string;
+  tickets: Ticket[];
+}
+
+// Stands in for GET /api/public/tickets/track/<verify_token>/ until the Django backend exists.
+export async function getTrackedTickets(verifyToken: string): Promise<TrackedTicketList | null> {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const resolved = resolveVerification(verifyToken);
+  if (!resolved) return null;
+  return { email: resolved.email, tickets: findTicketsByEmail(resolved.email) };
 }

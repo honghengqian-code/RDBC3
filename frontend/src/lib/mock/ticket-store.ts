@@ -1,3 +1,4 @@
+import { generateId } from "@/lib/mock/generate-id";
 import type { Ticket, TicketResponse } from "@/lib/types/ticket";
 
 const SEED_TICKETS: Ticket[] = [
@@ -184,6 +185,23 @@ const SEED_TICKETS: Ticket[] = [
     statusHistory: { Open: "2026-09-09T14:12:00", "In Progress": "2026-09-09T16:00:00" },
     attachments: [],
   },
+  {
+    id: "11",
+    token: "b7f3a92d-6e18-4c5a-9f27-3d8b1e6a0c94",
+    title: "Refund not showing up in account balance",
+    description:
+      "I was refunded for order #4471 three days ago according to the confirmation email, but " +
+      "the balance still hasn't appeared in my account.",
+    status: "Resolved",
+    priority: "Low",
+    clientName: "Ada Lovelace",
+    clientEmail: "ada@example.com",
+    createdAt: "2026-09-06T10:15:00",
+    updatedAt: "2026-09-07T09:30:00",
+    resolvedAt: "2026-09-07T09:30:00",
+    statusHistory: { Open: "2026-09-06T10:15:00", Resolved: "2026-09-07T09:30:00" },
+    attachments: [],
+  },
 ];
 
 const SEED_RESPONSES: TicketResponse[] = [
@@ -238,6 +256,11 @@ export function listAllTickets(): Ticket[] {
   return Array.from(ticketsById.values());
 }
 
+export function findTicketsByEmail(email: string): Ticket[] {
+  const q = email.trim().toLowerCase();
+  return listAllTickets().filter((t) => t.clientEmail.toLowerCase() === q);
+}
+
 export function findResponses(token: string): TicketResponse[] {
   return responsesByToken.get(token) ?? [];
 }
@@ -271,4 +294,62 @@ export function updateTicketById(
   ticketsById.set(id, updated);
   ticketsByToken.set(updated.token, updated);
   return updated;
+}
+
+// --- "Track your ticket" email verification (magic-link) ---
+// A short-lived token that resolves to an email, so the /track/<verifyToken>
+// page can list that email's tickets without the email itself ever
+// appearing in a URL. Stands in for a real verification-link email.
+//
+// Unlike the rest of this mock store, this one is backed by localStorage
+// rather than a plain in-memory Map: following the link is inherently a
+// fresh page load (it's meant to simulate opening an email, possibly in a
+// new tab), which resets any in-memory JS state — a plain Map would make
+// every verification link "expired" the instant you followed it.
+
+interface VerificationEntry {
+  email: string;
+  expiresAt: number;
+}
+
+const VERIFICATIONS_KEY = "incident-desk-track-verifications";
+const VERIFICATION_TTL_MS = 15 * 60 * 1000;
+
+function readVerifications(): Record<string, VerificationEntry> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(VERIFICATIONS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, VerificationEntry>) : {};
+  } catch (error) {
+    console.error("[ticket-store] failed to read verifications from storage", error);
+    return {};
+  }
+}
+
+function writeVerifications(all: Record<string, VerificationEntry>): void {
+  try {
+    window.localStorage.setItem(VERIFICATIONS_KEY, JSON.stringify(all));
+  } catch (error) {
+    console.error("[ticket-store] failed to persist verifications", error);
+  }
+}
+
+export function createVerification(email: string): string {
+  const token = generateId();
+  const all = readVerifications();
+  all[token] = { email: email.trim().toLowerCase(), expiresAt: Date.now() + VERIFICATION_TTL_MS };
+  writeVerifications(all);
+  return token;
+}
+
+export function resolveVerification(token: string): { email: string } | null {
+  const all = readVerifications();
+  const entry = all[token];
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    delete all[token];
+    writeVerifications(all);
+    return null;
+  }
+  return { email: entry.email };
 }
