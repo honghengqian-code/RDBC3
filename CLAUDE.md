@@ -77,6 +77,30 @@ Core user stories driving the design:
   `tests.py` / `tests/` per Django app in backend). Target ≥70% coverage on
   critical paths (ticket creation, token access, status updates), per project
   brief.
+- **Error handling & logging.** Important functions — anything that talks to
+  the network, the database, the filesystem, or another service — must not
+  fail silently or crash unhandled. Wrap the risky part in `try`/`except`
+  (backend) or `try`/`catch` (frontend), handle or surface the failure
+  deliberately, and log enough to debug it later without reproducing it:
+  - **Backend (Django):** module-level `logger = logging.getLogger(__name__)`
+    in views, serializers, signal handlers, and services. `logger.info(...)`
+    on key lifecycle events (ticket created, status changed, email sent/failed,
+    lookup attempted) and `logger.exception(...)` inside an `except` block so
+    the traceback is captured. Log identifiers (ticket id/token), never raw
+    PII like full email bodies. Configure `LOGGING` in settings to write to
+    console in dev.
+  - **Frontend (Next.js):** wrap API calls in `try`/`catch` — never an
+    unhandled rejected promise — and pair the user-facing error state (e.g.
+    `IncidentForm`'s `submitError`) with a `console.error(...)` that includes
+    the error and relevant context (which request, which id/token), so
+    failures are visible in the browser console during development. A
+    `console.info`/`console.debug` on a key success path (ticket created,
+    lookup resolved) is welcome too — it's what makes "is this actually
+    working" answerable at a glance while building.
+  - Scope this to functions where a failure or a milestone actually matters
+    for correctness or debugging — not every trivial getter or pure helper.
+    The goal is signal, not noise: a console/log full of unimportant lines is
+    as hard to debug from as one with nothing in it.
 
 ### 1.4 Git Workflow
 
@@ -149,21 +173,34 @@ npx jest --coverage           # coverage report
 src/
 ├── app/
 │   ├── layout.tsx                     # root layout, global styles/providers
-│   ├── page.tsx                       # "/" — Incident Reporting Page
+│   ├── globals.css                    # Tailwind entrypoint + design tokens (colocated with
+│   │                                   #   app/, not a separate styles/ dir)
+│   ├── page.tsx                       # "/" — Landing Page
 │   ├── report/
-│   │   └── page.tsx                   # "/report" — alt route to reporting form (or redirect from "/")
+│   │   └── page.tsx                   # "/report" — Incident Reporting Page
 │   ├── tickets/
 │   │   └── [token]/
 │   │       └── page.tsx               # "/tickets/[token]" — Ticket Status Page
 │   └── admin/
 │       ├── layout.tsx                 # admin shell (nav, auth guard)
+│       ├── login/
+│       │   └── page.tsx               # "/admin/login" — admin sign-in; unauthenticated
+│       │                               #   visits to any other /admin/* route redirect here
 │       ├── dashboard/
-│       │   └── page.tsx               # "/admin/dashboard"
-│       └── analytics/
-│           └── page.tsx               # "/admin/analytics"
+│       │   └── page.tsx               # "/admin/dashboard" — tabbed Ticket List / Analytics
+│       └── tickets/
+│           └── [id]/
+│               └── page.tsx           # "/admin/tickets/[id]" — Admin Ticket Detail
 │
 ├── components/
 │   ├── ui/                            # generic building blocks (Button, Badge, Modal, Input, Table)
+│   ├── landing/
+│   │   ├── NavBar.tsx                 # Home / Report Issue / Track Ticket + Admin Login
+│   │   ├── Hero.tsx
+│   │   ├── TicketLookupCard.tsx       # email-or-token lookup box ("Track Your Ticket")
+│   │   ├── HowItWorks.tsx
+│   │   ├── Features.tsx
+│   │   └── Footer.tsx
 │   ├── report/
 │   │   ├── IncidentForm.tsx           # RHF + Zod form
 │   │   └── AttachmentUploader.tsx
@@ -172,35 +209,48 @@ src/
 │   │   ├── TicketTimeline.tsx
 │   │   └── ResponseThread.tsx
 │   ├── admin/
-│   │   ├── TicketTable.tsx
+│   │   ├── DashboardTabs.tsx          # "Ticket List" / "Analytics" tab switcher
+│   │   ├── TicketTable.tsx            # rows link to "/admin/tickets/[id]"
 │   │   ├── TicketFilters.tsx
-│   │   ├── QuickEditControls.tsx      # inline priority/status editors
-│   │   └── ResponseDrawer.tsx
+│   │   ├── QuickEditControls.tsx      # inline priority/status editors (dashboard table)
+│   │   └── ticket-detail/
+│   │       ├── StatusUpdatePanel.tsx  # status select + explicit "Update status" button
+│   │       ├── PrioritySelect.tsx     # applies immediately, no confirm step
+│   │       ├── ClientDetailsCard.tsx
+│   │       ├── AttachmentsList.tsx
+│   │       ├── MessageThread.tsx      # Admin vs Client bubbles, "self" aligned right
+│   │       └── AdminReplyForm.tsx     # textarea + attach files + notify-client toggle
 │   └── analytics/
+│       ├── MetricCard.tsx             # Total Tickets / Avg Resolution Time / Open vs Closed
 │       ├── StatusDistributionChart.tsx
-│       ├── OpenVsClosedChart.tsx
 │       └── ResolutionVelocityChart.tsx
 │
 ├── lib/
 │   ├── api/
-│   │   ├── client.ts                  # fetch wrapper (base URL, error handling)
+│   │   ├── client.ts                  # fetch wrapper — not yet built; nothing calls a real
+│   │   │                               #   backend yet, so there's nothing to wrap. Add it
+│   │   │                               #   alongside the first real fetch, not before.
 │   │   ├── tickets.ts                 # public ticket endpoints (create, get-by-token)
 │   │   ├── admin.ts                   # admin ticket + response endpoints
 │   │   └── analytics.ts               # analytics endpoints
+│   ├── mock/                          # in-memory stand-ins for the endpoints above, until the
+│   │   │                               #   Django backend exists. Delete this folder once real
+│   │   │                               #   API calls replace it — don't grow it further.
+│   │   ├── ticket-store.ts            # seeded tickets/responses "database"
+│   │   └── admin-auth.ts              # localStorage-backed mock session
 │   ├── validation/
 │   │   ├── incidentSchema.ts          # Zod schema for report form
 │   │   └── responseSchema.ts          # Zod schema for admin response form
+│   ├── ticket-meta.ts                 # shared status/priority order + badge colors
+│   ├── format.ts                      # date/duration formatting helpers
 │   └── types/
 │       ├── ticket.ts                  # Ticket, Response, Client TS types (mirror backend serializers)
 │       └── analytics.ts
 │
-├── hooks/
-│   ├── useTicket.ts                   # fetch + poll a single ticket by token
-│   ├── useTicketList.ts               # admin table data + filters
-│   └── useAnalytics.ts
-│
-└── styles/
-    └── globals.css                    # Tailwind entrypoint
+└── hooks/
+    ├── useTicket.ts                   # fetch + poll a single ticket by token
+    ├── useTicketList.ts               # admin table data + filters
+    └── useAnalytics.ts
 ```
 
 ### 2.2 Component Specification & State Management
@@ -211,7 +261,31 @@ state via `useState`/`useReducer`; no global store needed at this scale — admi
 filter state can live in the URL (`searchParams`) so views are shareable/
 bookmarkable.
 
-#### Incident Reporting Page (`/` or `/report`)
+#### Landing Page (`/`)
+- **Components:** `NavBar`, `Hero`, `TicketLookupCard`, `HowItWorks`, `Features`, `Footer`.
+- **Nav:** Home, Report Issue (→ `/report`), Track Ticket (→ `#track` on this page),
+  and a de-emphasized Admin Login (→ `/admin/login`) — repeated in the footer.
+- **Hero:** states the core pitch plainly — "Report incidents instantly. No
+  account registration required." — plus a one-line explanation of the
+  token-link model.
+- **Two primary action cards** side by side below the hero:
+  1. **Report an Incident** — copy + CTA button linking to `/report`.
+  2. **Track Your Ticket** (`TicketLookupCard`) — an input accepting either an
+     email or a ticket token, plus a submit action. Behavior differs by what
+     was entered, and this distinction matters for privacy (see 3.3):
+     - **Looks like a token:** resolve straight to `/tickets/[token]`.
+     - **Looks like an email:** never reveal or navigate directly — show a
+       neutral "if this email has tickets, we've sent tracking links to that
+       inbox" message. Enumerating a stranger's tickets by guessing emails
+       must not be possible.
+     - **Neither:** inline validation error.
+- **How it works:** a lightweight 3-step strip (Report → Get your link →
+  Track & reply) reusing the same step/connector visual language as the
+  Ticket Status Page's timeline, for consistency across the product.
+- **Feature highlights:** three columns — instant email notifications, direct
+  token link access, real-time status tracking.
+
+#### Incident Reporting Page (`/report`)
 - **Component:** `IncidentForm.tsx` (client component).
 - **Form library:** React Hook Form + Zod resolver (`incidentSchema.ts`).
 - **Fields & validation:**
@@ -231,39 +305,92 @@ bookmarkable.
 #### Ticket Status Page (`/tickets/[token]`)
 - **Access model:** token in the URL is the only credential — no login. Invalid
   or unknown token renders a clear "ticket not found" state, not a 500.
-- **Components:** `StatusBadge`, `TicketTimeline`, `ResponseThread`.
+- **Components:** `StatusBadge`, `PriorityBadge`, `TicketTimeline`, `ResponseThread`, `ReplyBox`.
 - **Data:** `useTicket(token)` hook fetches `GET /api/public/tickets/:token/`
   on mount and polls on an interval (e.g. every 30s) or revalidates on window
   focus to approximate "real-time" updates without a websocket layer.
-- **Timeline:** derived from `status` changes and `Response` entries, sorted by
-  `created_at`, rendered oldest → newest.
-- **Response thread:** read-only list of `Response` objects for the client
-  view; clients cannot post responses (post-MVP: optional client reply, not in
-  initial scope).
+- **Ticket details:** title, description, `StatusBadge`, `PriorityBadge`, and
+  the "opened" timestamp are rendered from the fetched `Ticket` at the top of
+  the page.
+- **Timeline:** a 3-step tracker (`Open` → `In Progress` → `Resolved`) derived
+  from `status` and the timestamp of each status transition, rendered as a
+  horizontal stepper (stacked on narrow screens); the current step is
+  highlighted, future steps show as pending.
+- **Response thread:** chronological list of `Response` objects
+  (`created_at` ascending), visually distinguishing `author_type` — e.g.
+  client messages right-aligned/accent-tinted, admin messages left-aligned/
+  neutral-tinted — so the client can tell their own messages from support's.
+- **Reply box:** a textarea + submit button pinned under the thread lets the
+  client post a new `Response` (`author_type=Client`) directly on their own
+  ticket via `POST /api/public/tickets/:token/responses/`; appends optimistically
+  on success. Clients can only add responses to their own ticket (token-scoped),
+  never change `status`/`priority`.
 
 #### Admin Dashboard (`/admin/dashboard`)
 - **Access:** behind the admin auth guard in `app/admin/layout.tsx`.
-- **Components:** `TicketTable`, `TicketFilters`, `QuickEditControls`,
-  `ResponseDrawer`.
-- **Filters:** status, priority, date range, free-text search — reflected in
-  URL query params; `useTicketList` reads `searchParams` and calls
-  `GET /api/admin/tickets/?status=&priority=&search=`.
-- **Quick-edit:** inline `<select>`/dropdown per row for `status` and
-  `priority` that fires `PATCH /api/admin/tickets/:id/` optimistically, rolling
-  back on error.
-- **Response drawer:** slide-over panel opened per ticket row; posts to
-  `POST /api/admin/tickets/:id/responses/`, which also triggers the backend
-  email-notification signal (see 3.5).
+- **Layout:** a single page with two tabs — **Ticket List** and **Analytics**
+  — switched client-side via `DashboardTabs` (no route change; tab state can
+  live in a `?tab=` query param so a view is linkable/refreshable). Ticket
+  List is the default tab.
 
-#### Analytics View (`/admin/analytics`)
-- **Components:** `StatusDistributionChart`, `OpenVsClosedChart`,
-  `ResolutionVelocityChart`. Chart library: lightweight option such as
-  `recharts` (decide at implementation time; keep it to one library).
-- **Data:** `useAnalytics()` calls `GET /api/admin/analytics/summary/` once per
-  page load (not polled — analytics are not real-time-critical).
-- **Metrics shown:** ticket count by status, ticket count by priority, open vs.
-  closed over time, average/median resolution time (time between `Open` and
-  `Resolved`).
+**Ticket List tab**
+- **Components:** `TicketTable`, `TicketFilters`, `QuickEditControls`.
+- **Filters:** status, priority, free-text search (title/client name/email) —
+  reflected in URL query params; `useTicketList` reads `searchParams` and
+  calls `GET /api/admin/tickets/?status=&priority=&search=`. A visible
+  "Showing X of Y" count and a "Clear filters" action appear whenever a
+  filter is active.
+- **Quick-edit:** inline pill-styled `<select>` per row for `status` and for
+  `priority`, colored to match the corresponding badge; changing either fires
+  `PATCH /api/admin/tickets/:id/` optimistically, rolling back on error.
+  Setting `status` to `Resolved` is what stamps `resolvedAt` server-side (used
+  for the resolution-time analytics below).
+- **Row click:** navigates to `/admin/tickets/[id]` (the full detail view,
+  below) rather than opening an inline drawer — a ticket's description,
+  attachments, and full reply thread need more room than a slide-over gives.
+
+#### Admin Ticket Detail (`/admin/tickets/[id]`)
+- **Access:** same admin auth guard; `[id]` is the internal numeric/UUID
+  `Ticket.id` (never the public `token`).
+- **Header bar:** "← Back to Dashboard" (→ `/admin/dashboard`), `Ticket #<id>`,
+  the ticket title, and `StatusBadge` + `PriorityBadge`.
+- **Sidebar — Quick actions:**
+  - `StatusUpdatePanel`: a `status` select plus an explicit **Update status**
+    button (not auto-applied on change) — deliberately not instant, since
+    committing it fires the client-notification email (see 3.5); the UI notes
+    this directly ("Changing status emails the client automatically").
+  - `PrioritySelect`: applies immediately on change, same as the dashboard's
+    quick-edit — priority changes don't trigger any notification, so there's
+    no need for a confirm step.
+  - `ClientDetailsCard`: client name, email, full `token` (monospace, with
+    copy-to-clipboard), and the ticket's created timestamp.
+- **Main workspace:**
+  - `Description` block, plus an `AttachmentsList` for any files the client
+    uploaded when filing.
+  - `MessageThread`: the full `Response` history, `created_at` ascending,
+    bubble-aligned relative to the viewer — the logged-in admin's own replies
+    align right ("You"), the client's align left — the mirror image of the
+    public Ticket Status Page, where the client sees their own messages on
+    the right instead.
+  - `AdminReplyForm`: a textarea, an "Attach files" control, and an
+    **Auto-notify client via email** checkbox (checked by default) — lets an
+    admin post several quick internal-facing replies without emailing the
+    client on every single one, only notifying when they choose to. Submits
+    via `POST /api/admin/tickets/:id/responses/` with `notify_client` in the
+    body (see 3.4/3.5).
+
+**Analytics tab**
+- **Metric cards:** `MetricCard` × 3 — **Total Tickets**, **Avg. Resolution
+  Time** (mean of `resolvedAt - createdAt` over resolved tickets, formatted
+  in hours/days), and **Open vs. Closed ratio** (with an inline stacked
+  progress bar).
+- **Charts:** `StatusDistributionChart` (ticket count per status) and
+  `ResolutionVelocityChart` (days-to-close per resolved ticket, chronological)
+  — simple bar charts driven directly off the same ticket list response, no
+  chart library required for MVP; swap in something like `recharts` later
+  only if chart needs grow past bars.
+- **Data:** `useAnalytics()` calls `GET /api/admin/analytics/summary/` once
+  per tab activation (not polled — analytics are not real-time-critical).
 
 ---
 
@@ -298,6 +425,7 @@ bookmarkable.
 | `status` | CharField w/ choices | `Open` / `In Progress` / `Resolved`, default `Open` |
 | `created_at` | DateTimeField | `auto_now_add=True` |
 | `updated_at` | DateTimeField | `auto_now=True` |
+| `resolved_at` | DateTimeField, nullable | Set once, the moment `status` first transitions to `Resolved` (not touched again after, even if `status` later changes) — kept distinct from `updated_at` so a later priority/status edit on an already-resolved ticket can't quietly corrupt the resolution-time analytics. Cleared back to `null` if `status` moves away from `Resolved`. |
 
 **`Response`**
 | field | type | notes |
@@ -311,9 +439,11 @@ bookmarkable.
 Indices: `Ticket.token`, `Client.token`, `Client.email`, `Ticket.status`,
 `Ticket.priority` (filter/sort targets for the admin dashboard and analytics).
 
-Attachments (from the reporting form) are out of scope for the core schema
-above — model as a future `Attachment` FK'd to `Ticket` with a `FileField`
-storing to a media volume/bucket; not required for MVP schema lock-in.
+Attachments (from the reporting form, and optionally from an admin reply) are
+out of scope for the core schema above — model as a future `Attachment` with a
+`FileField` storing to a media volume/bucket, FK'd to `Ticket` for files
+attached at creation and to `Response` for files attached to a reply; not
+required for MVP schema lock-in.
 
 ### 3.3 Non-Login Access Logic
 
@@ -327,6 +457,14 @@ storing to a media volume/bucket; not required for MVP schema lock-in.
   without a token.
 - Tokens are UUIDv4 — not guessable, not sequential. No expiry in MVP; revisit
   if the brief requires link expiration later.
+- The landing page's "Track Your Ticket" lookup accepts either a token or an
+  email, but the two must behave asymmetrically: a token is itself the
+  credential, so a valid one may resolve straight to `/tickets/<token>`. An
+  email is **not** a credential — it must never directly return or confirm
+  which tickets exist for that address (that would let anyone enumerate a
+  stranger's tickets by trying emails). The email path always responds with
+  the same neutral message and, if a match exists, re-sends that ticket's
+  link by email instead of returning it in the API response.
 
 ### 3.4 API Endpoint Contracts
 
@@ -335,6 +473,14 @@ storing to a media volume/bucket; not required for MVP schema lock-in.
 |---|---|---|
 | POST | `/api/public/tickets/` | Create a ticket (name, email, title, description, attachments). Returns ticket incl. `token`. Triggers confirmation email. |
 | GET | `/api/public/tickets/<token>/` | Fetch one ticket + its responses, by token. 404 if token invalid. |
+| POST | `/api/public/tickets/<token>/responses/` | Client reply: add a `Response` with `author_type=Client` to their own ticket, resolved by token (never by id/login). Triggers a notification email to the admin(s) watching the ticket. |
+| POST | `/api/public/tickets/lookup/` | Landing-page "Track Your Ticket" lookup. Body: `{ query }`. If `query` matches a `Ticket.token`, returns `{ redirect: "/tickets/<token>" }`. Otherwise (treated as an email) always returns the same generic `{ status: "ok" }` and, only if a match exists, re-sends that ticket's link by email — never confirms existence or returns ticket data in the response. |
+
+**Admin auth — prefix `/api/admin/auth/`** (unauthenticated)
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/admin/auth/login/` | Body: `{ email, password }`. Sets the session cookie on success (see auth note below); `400`/`401` with a generic "Incorrect email or password" on failure — never reveal whether the email exists. |
+| POST | `/api/admin/auth/logout/` | Clears the session. |
 
 **Admin (authenticated) — prefix `/api/admin/`**
 | Method | Path | Purpose |
@@ -342,7 +488,7 @@ storing to a media volume/bucket; not required for MVP schema lock-in.
 | GET | `/api/admin/tickets/` | List tickets; supports `?status=`, `?priority=`, `?search=`, pagination. |
 | GET | `/api/admin/tickets/<id>/` | Retrieve one ticket (by internal id) with full response history. |
 | PATCH | `/api/admin/tickets/<id>/` | Update `status` and/or `priority` (quick-edit). Triggers status-change signal if `status` changed. |
-| POST | `/api/admin/tickets/<id>/responses/` | Add an admin response/comment to a ticket. Triggers notification email. |
+| POST | `/api/admin/tickets/<id>/responses/` | Add an admin response/comment to a ticket. Body: `{ message, notify_client? }` (`notify_client` defaults `true`). Triggers the client-notification email only when `notify_client` is true, so an admin can post several replies and only notify on the last. |
 | GET | `/api/admin/analytics/summary/` | Aggregate counts: by status, by priority, open-vs-closed, avg/median resolution time. |
 
 Auth for `/api/admin/*`: DRF session auth (backed by Django admin login) or
@@ -361,7 +507,13 @@ the client token scheme and must never accept a `Ticket.token` as credential.
      `PATCH` view): send the client an email noting the new status, with the
      same ticket link.
   3. **On new `Response` with `author_type=Admin`:** email the client that a
-     new response was posted, with the ticket link.
+     new response was posted, with the ticket link — unless the admin sent it
+     with `notify_client=false` (see 3.4), e.g. while posting several quick
+     replies in a row and only wanting the last one to notify.
+  4. **On new `Response` with `author_type=Client`:** notify the admin(s)
+     (e.g. `settings.ADMIN_NOTIFICATION_EMAILS`, or whoever the ticket is
+     assigned to once assignment exists) that the client replied, linking to
+     the admin ticket view.
 - Implementation: Django's built-in `django.core.mail.send_mail`, backed by
   console backend in dev and SMTP (or a provider) in deployment, configured via
   env vars — no email content templates committed with real credentials.
