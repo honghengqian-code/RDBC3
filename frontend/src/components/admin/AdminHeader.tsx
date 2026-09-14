@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { IconMark } from "@/components/ui/icons";
-import { adminLogout, type AdminSession } from "@/lib/mock/admin-auth";
+import { adminLogout, type AdminSession } from "@/lib/api/auth";
 
 export function AdminHeader({ session }: { session: AdminSession }) {
   const router = useRouter();
@@ -14,9 +14,13 @@ export function AdminHeader({ session }: { session: AdminSession }) {
     .slice(0, 2)
     .toUpperCase();
 
-  const logout = () => {
+  const logout = async () => {
     console.info("[AdminHeader] logging out", { email: session.email });
-    adminLogout();
+    try {
+      await adminLogout();
+    } catch (error) {
+      console.error("[AdminHeader] logout request failed", error);
+    }
     router.replace("/admin/login");
   };
 

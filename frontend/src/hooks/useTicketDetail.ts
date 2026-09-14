@@ -7,7 +7,6 @@ import {
   updateTicket,
   type UpdateTicketPatch,
 } from "@/lib/api/admin";
-import { getAdminSession } from "@/lib/mock/admin-auth";
 import type { Ticket, TicketResponse } from "@/lib/types/ticket";
 
 type DetailState =
@@ -58,8 +57,7 @@ export function useTicketDetail(id: string) {
 
   const sendReply = useCallback(
     async (message: string, notifyClient: boolean) => {
-      const authorName = getAdminSession()?.name ?? "Admin";
-      const response = await addAdminResponse(id, { message, notifyClient, authorName });
+      const response = await addAdminResponse(id, { message, notifyClient });
       console.info("[useTicketDetail] reply sent", { id, responseId: response.id, notifyClient });
       setState((prev) =>
         prev.status === "ready" ? { ...prev, responses: [...prev.responses, response] } : prev,

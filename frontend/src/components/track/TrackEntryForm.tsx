@@ -10,7 +10,7 @@ const EXAMPLE_TOKEN = "d4a1f2b6-9c3a";
 type EntryState =
   | { status: "idle" }
   | { status: "checking" }
-  | { status: "sent"; email: string; devVerifyUrl?: string }
+  | { status: "sent"; email: string }
   | { status: "invalid"; message: string };
 
 function isEmail(value: string): boolean {
@@ -63,9 +63,9 @@ export function TrackEntryForm() {
 
     setState({ status: "checking" });
     try {
-      const result = await requestTrackingLink(v);
+      await requestTrackingLink(v);
       console.info("[TrackEntryForm] tracking link requested", { email: v });
-      setState({ status: "sent", email: v, devVerifyUrl: result.devVerifyUrl });
+      setState({ status: "sent", email: v });
     } catch (error) {
       console.error("[TrackEntryForm] failed to request tracking link", error);
       setState({ status: "invalid", message: "Something went wrong. Please try again." });
@@ -82,17 +82,13 @@ export function TrackEntryForm() {
           If <span className="font-medium text-[var(--ink)]">{state.email}</span> has any
           tickets, we&apos;ve sent a link to view them — it&apos;s valid for 15 minutes.
         </p>
-        {state.devVerifyUrl && (
+        {process.env.NODE_ENV !== "production" && (
           <div className="mt-5 rounded-lg border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)] p-4 text-left">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Dev preview — no email backend yet
+            <p className="text-xs text-[var(--muted)]">
+              <span className="font-semibold uppercase tracking-wide">Dev note</span> — no SMTP
+              configured yet, so the link was printed to the Django backend&apos;s console output
+              (the email backend defaults to <span className="font-mono">console</span> in dev).
             </p>
-            <a
-              href={state.devVerifyUrl}
-              className="btn-focus font-mono block truncate text-xs text-[var(--accent)] underline"
-            >
-              {state.devVerifyUrl}
-            </a>
           </div>
         )}
       </section>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AdminHeader } from "@/components/admin/AdminHeader";
-import { getAdminSession, type AdminSession } from "@/lib/mock/admin-auth";
+import { getAdminSession, type AdminSession } from "@/lib/api/auth";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -11,12 +11,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [session, setSession] = useState<AdminSession | null | "checking">("checking");
 
   useEffect(() => {
-    const current = getAdminSession();
-    setSession(current);
-    if (!current && pathname !== "/admin/login") {
-      console.warn("[AdminLayout] no admin session, redirecting to /admin/login");
-      router.replace("/admin/login");
-    }
+    let cancelled = false;
+    (async () => {
+      const current = await getAdminSession();
+      if (cancelled) return;
+      setSession(current);
+      if (!current && pathname !== "/admin/login") {
+        console.warn("[AdminLayout] no admin session, redirecting to /admin/login");
+        router.replace("/admin/login");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [pathname, router]);
 
   // The login page renders its own full-page chrome — no shell/guard around it.

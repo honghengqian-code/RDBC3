@@ -21,6 +21,7 @@ public_urlpatterns = [
 admin_auth_urlpatterns = [
     path("login/", views.AdminLoginView.as_view(), name="admin-login"),
     path("logout/", views.AdminLogoutView.as_view(), name="admin-logout"),
+    path("session/", views.AdminSessionView.as_view(), name="admin-session"),
 ]
 
 admin_urlpatterns = [

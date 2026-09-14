@@ -204,6 +204,21 @@ class AdminLogoutView(APIView):
         return DRFResponse(status=status.HTTP_204_NO_CONTENT)
 
 
+class AdminSessionView(APIView):
+    """GET /api/admin/auth/session/ — lets the frontend ask "am I logged in"
+    on page load. The session cookie is httponly by design, so the SPA can't
+    introspect it directly; it has to ask the server instead of trusting
+    client-side state (the old localStorage mock could get away with that,
+    a real session can't)."""
+
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        get_token(request)
+        user = request.user
+        return DRFResponse({"email": user.email, "name": user.get_full_name() or user.username})
+
+
 # --- Admin: tickets ---
 
 

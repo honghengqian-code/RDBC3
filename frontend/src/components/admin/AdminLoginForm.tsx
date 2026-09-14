@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { FormField } from "@/components/ui/FormField";
 import { IconSpinner } from "@/components/ui/icons";
-import { adminLogin } from "@/lib/mock/admin-auth";
+import { adminLogin } from "@/lib/api/auth";
 
 const loginSchema = z.object({
   email: z
@@ -64,7 +64,7 @@ export function AdminLoginForm() {
             id="email"
             type="email"
             autoComplete="email"
-            placeholder="priya@example.com"
+            placeholder="admin@example.com"
             className="field-input"
             aria-invalid={!!errors.email}
             {...register("email")}
@@ -92,8 +92,9 @@ export function AdminLoginForm() {
       </form>
 
       <p className="mt-6 text-center text-xs text-[var(--muted)]">
-        Demo credentials — email <span className="font-mono">priya@example.com</span>, password{" "}
-        <span className="font-mono">incidentdesk123</span>
+        Demo credentials — email <span className="font-mono">admin@example.com</span>, password{" "}
+        <span className="font-mono">admin12345</span> (seeded via{" "}
+        <span className="font-mono">manage.py seed_demo_data</span>)
       </p>
     </section>
   );

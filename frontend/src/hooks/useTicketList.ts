@@ -5,7 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { listTickets, updateTicket, type UpdateTicketPatch } from "@/lib/api/admin";
 import type { Ticket } from "@/lib/types/ticket";
 
-type ListState = { status: "loading" } | { status: "error" } | { status: "ready"; tickets: Ticket[] };
+type ListState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; tickets: Ticket[]; grandTotal: number };
 
 export function useTicketList() {
   const searchParams = useSearchParams();
@@ -14,17 +17,25 @@ export function useTicketList() {
   const statusFilter = searchParams.get("status") ?? "All";
   const priorityFilter = searchParams.get("priority") ?? "All";
   const search = searchParams.get("search") ?? "";
+  const hasFilter = statusFilter !== "All" || priorityFilter !== "All" || search !== "";
 
   const load = useCallback(async () => {
+    setState({ status: "loading" });
     try {
-      const tickets = await listTickets();
-      console.info("[useTicketList] loaded", { count: tickets.length });
-      setState({ status: "ready", tickets });
+      // Fetch the filtered set and, only when a filter is active, the grand
+      // total too — that's what "Showing X of Y" (CLAUDE.md 2.2) needs; the
+      // unfiltered call is skipped when there's nothing to compare against.
+      const [tickets, grandTotal] = await Promise.all([
+        listTickets({ status: statusFilter, priority: priorityFilter, search }),
+        hasFilter ? listTickets({}).then((all) => all.length) : Promise.resolve(-1),
+      ]);
+      console.info("[useTicketList] loaded", { count: tickets.length, statusFilter, priorityFilter, search });
+      setState({ status: "ready", tickets, grandTotal: hasFilter ? grandTotal : tickets.length });
     } catch (error) {
       console.error("[useTicketList] failed to load tickets", error);
       setState({ status: "error" });
     }
-  }, []);
+  }, [statusFilter, priorityFilter, search, hasFilter]);
 
   useEffect(() => {
     load();
@@ -54,21 +65,12 @@ export function useTicketList() {
   );
 
   const tickets = state.status === "ready" ? state.tickets : [];
-  const filtered = tickets.filter((t) => {
-    if (statusFilter !== "All" && t.status !== statusFilter) return false;
-    if (priorityFilter !== "All" && t.priority !== priorityFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const haystack = `${t.title} ${t.clientName} ${t.clientEmail}`.toLowerCase();
-      if (!haystack.includes(q)) return false;
-    }
-    return true;
-  });
+  const total = state.status === "ready" ? state.grandTotal : tickets.length;
 
   return {
     status: state.status,
-    tickets: filtered,
-    total: tickets.length,
+    tickets,
+    total,
     patchTicket,
     refetch: load,
   };

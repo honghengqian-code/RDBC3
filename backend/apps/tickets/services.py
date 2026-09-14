@@ -6,14 +6,25 @@ machinery — see CLAUDE.md 3.5.
 import logging
 
 from django.conf import settings
-from django.core import signing
 from django.core.mail import send_mail
-from django.core.signing import BadSignature, SignatureExpired
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 
 logger = logging.getLogger(__name__)
 
 TRACK_VERIFY_SALT = "apps.tickets.track-verification"
 TRACK_VERIFY_MAX_AGE_SECONDS = 15 * 60  # 15 minutes, per CLAUDE.md 3.3
+
+# django.core.signing's dumps()/loads() default to ":" as the field
+# separator, which is a live bug once this token has to survive a real
+# browser navigation: Chromium percent-encodes literal colons in a path
+# segment on click-through, so `:` becomes `%3A` in the outgoing request —
+# and since our own encodeURIComponent() call on the frontend then encodes
+# that `%` again, the token arrives as `%253A`-mangled garbage and never
+# round-trips. "." is in no base64url alphabet Django's signer emits, so
+# it's a safe, URL-clean substitute — confirmed via an isolated Playwright
+# navigation before this fix (not just unit-tested against dumps()/loads()
+# directly, which never exercises a real click and would have missed this).
+_track_signer = TimestampSigner(salt=TRACK_VERIFY_SALT, sep=".")
 
 
 def _ticket_url(token) -> str:
@@ -91,15 +102,13 @@ def send_new_client_response_email(ticket) -> None:
 def create_track_verification(email: str) -> str:
     """Sign the (lowercased) email into a short-lived, opaque token."""
     normalized = email.strip().lower()
-    return signing.dumps(normalized, salt=TRACK_VERIFY_SALT)
+    return _track_signer.sign_object(normalized)
 
 
 def resolve_track_verification(verify_token: str) -> str | None:
     """Return the email a verify token was issued for, or None if invalid/expired."""
     try:
-        return signing.loads(
-            verify_token, salt=TRACK_VERIFY_SALT, max_age=TRACK_VERIFY_MAX_AGE_SECONDS
-        )
+        return _track_signer.unsign_object(verify_token, max_age=TRACK_VERIFY_MAX_AGE_SECONDS)
     except SignatureExpired:
         logger.info("Track verification token expired")
         return None

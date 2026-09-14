@@ -237,17 +237,18 @@ src/
 │
 ├── lib/
 │   ├── api/
-│   │   ├── client.ts                  # fetch wrapper — not yet built; nothing calls a real
-│   │   │                               #   backend yet, so there's nothing to wrap. Add it
-│   │   │                               #   alongside the first real fetch, not before.
+│   │   ├── client.ts                  # fetch wrapper: credentials:"include" + X-CSRFToken
+│   │   │                               #   from the csrftoken cookie on unsafe methods; throws
+│   │   │                               #   ApiError, returns null on 404/204. All requests go
+│   │   │                               #   straight to the Django backend — lib/mock/ is gone.
+│   │   ├── mappers.ts                  # snake_case backend JSON -> camelCase frontend types;
+│   │   │                               #   also fills fields a given serializer omits (e.g. the
+│   │   │                               #   admin *list* serializer skips description/attachments)
+│   │   │                               #   with safe defaults unused by that view.
+│   │   ├── auth.ts                    # admin login/logout/session-check
 │   │   ├── tickets.ts                 # public ticket endpoints (create, get-by-token)
 │   │   ├── admin.ts                   # admin ticket + response endpoints
 │   │   └── analytics.ts               # analytics endpoints
-│   ├── mock/                          # in-memory stand-ins for the endpoints above, until the
-│   │   │                               #   Django backend exists. Delete this folder once real
-│   │   │                               #   API calls replace it — don't grow it further.
-│   │   ├── ticket-store.ts            # seeded tickets/responses "database"
-│   │   └── admin-auth.ts              # localStorage-backed mock session
 │   ├── validation/
 │   │   ├── incidentSchema.ts          # Zod schema for report form
 │   │   └── responseSchema.ts          # Zod schema for admin response form
@@ -501,9 +502,16 @@ required for MVP schema lock-in.
     The verify token is short-lived (15 min) and single-purpose: it only ever
     resolves to an email address, never doubles as a login session.
   - Implementation note: this doesn't need a full model — a signed,
-    timestamped token (e.g. Django's `django.core.signing.TimestampSigner`
-    wrapping the email, or a minimal `EmailVerification(token, email,
-    expires_at)` row if signing alone feels too opaque to debug) is enough.
+    timestamped token (`django.core.signing.TimestampSigner` wrapping the
+    email) is enough. **Use a URL-safe `sep`** when constructing the signer
+    (`TimestampSigner(salt=..., sep=".")`) instead of the library default
+    `sep=":"` — a real browser click-through percent-encodes a literal `:`
+    in a path segment, and since the frontend also runs `encodeURIComponent`
+    on the token, the default separator arrives double-encoded (`%253A`) and
+    never verifies. This only surfaces when the link is actually clicked in
+    a browser — a `Client.get()`/unit-style test against `dumps()`/`loads()`
+    directly won't catch it, which is exactly how it slipped through the
+    first pass here.
 
 ### 3.4 API Endpoint Contracts
 
@@ -521,6 +529,7 @@ required for MVP schema lock-in.
 |---|---|---|
 | POST | `/api/admin/auth/login/` | Body: `{ email, password }`. Sets the session cookie on success (see auth note below); `400`/`401` with a generic "Incorrect email or password" on failure — never reveal whether the email exists. |
 | POST | `/api/admin/auth/logout/` | Clears the session. |
+| GET | `/api/admin/auth/session/` | Returns the logged-in admin's `{ email, name }`, or 401/403 if there's no valid session. The session cookie is httponly, so the frontend can't just read it client-side to decide whether to show the dashboard or redirect to login — `AdminLayout` calls this on every `/admin/*` mount instead. |
 
 **Admin (authenticated) — prefix `/api/admin/`**
 | Method | Path | Purpose |

@@ -1,21 +1,13 @@
-import { generateId } from "@/lib/mock/generate-id";
-import {
-  appendResponse,
-  createVerification,
-  findResponses,
-  findTicket,
-  findTicketsByEmail,
-  resolveVerification,
-} from "@/lib/mock/ticket-store";
+import { apiFetch } from "@/lib/api/client";
+import { mapResponse, mapTicketDetail, mapTicketSummary } from "@/lib/api/mappers";
 import type { Ticket, TicketResponse } from "@/lib/types/ticket";
-
-const TICKET_DOMAIN = "https://helpdesk.example.com";
 
 export interface CreateTicketInput {
   name: string;
   email: string;
   title: string;
   description: string;
+  /** Not yet persisted — Attachment storage is out of MVP scope, see CLAUDE.md 3.2. */
   attachments: File[];
 }
 
@@ -24,12 +16,14 @@ export interface CreateTicketResult {
   link: string;
 }
 
-// Stands in for POST /api/public/tickets/ (multipart, incl. attachments) until the Django backend exists.
+// POST /api/public/tickets/
 export async function createTicket(input: CreateTicketInput): Promise<CreateTicketResult> {
-  void input;
-  await new Promise((resolve) => setTimeout(resolve, 900));
-  const token = generateId();
-  return { token, link: `${TICKET_DOMAIN}/tickets/${token}` };
+  const data = await apiFetch<{ token: string }>("/api/public/tickets/", {
+    method: "POST",
+    body: { name: input.name, email: input.email, title: input.title, description: input.description },
+  });
+  if (!data) throw new Error("Ticket creation returned no data.");
+  return { token: data.token, link: `${window.location.origin}/tickets/${data.token}` };
 }
 
 export interface TicketWithResponses {
@@ -37,46 +31,34 @@ export interface TicketWithResponses {
   responses: TicketResponse[];
 }
 
-// Stands in for GET /api/public/tickets/<token>/ until the Django backend exists.
+// GET /api/public/tickets/<token>/
 export async function getTicketByToken(token: string): Promise<TicketWithResponses | null> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const ticket = findTicket(token);
-  if (!ticket) return null;
-  return { ticket, responses: findResponses(token) };
+  const data = await apiFetch<Parameters<typeof mapTicketDetail>[0] & { responses: Parameters<typeof mapResponse>[0][] }>(
+    `/api/public/tickets/${encodeURIComponent(token)}/`,
+  );
+  if (!data) return null;
+  return { ticket: mapTicketDetail(data), responses: data.responses.map(mapResponse) };
 }
 
-// Stands in for POST /api/public/tickets/<token>/responses/ until the Django backend exists.
+// POST /api/public/tickets/<token>/responses/
 export async function addTicketResponse(token: string, message: string): Promise<TicketResponse> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const ticket = findTicket(token);
-  if (!ticket) throw new Error(`No ticket found for token ${token}`);
-  const response: TicketResponse = {
-    id: `r-${Date.now()}`,
-    authorType: "Client",
-    author: ticket.clientName,
-    message,
-    createdAt: new Date().toISOString(),
-  };
-  appendResponse(token, response);
-  return response;
+  const data = await apiFetch<Parameters<typeof mapResponse>[0]>(
+    `/api/public/tickets/${encodeURIComponent(token)}/responses/`,
+    { method: "POST", body: { message } },
+  );
+  if (!data) throw new Error("Reply submission returned no data.");
+  return mapResponse(data);
 }
 
 export interface RequestTrackingLinkResult {
   status: "ok";
-  /**
-   * Dev-only convenience: the direct verification URL, since there's no real email backend yet.
-   * A production response must never include this — the link only ever reaches the real inbox.
-   */
-  devVerifyUrl?: string;
 }
 
-// Stands in for POST /api/public/tickets/lookup/ until the Django backend exists. Always
-// returns the same shape regardless of whether the email has any tickets, so this can't be
-// used to enumerate which addresses have filed tickets.
+// POST /api/public/tickets/lookup/ — always the same response shape whether or not the
+// address has any tickets, so this can't be used to enumerate who has filed one.
 export async function requestTrackingLink(email: string): Promise<RequestTrackingLinkResult> {
-  await new Promise((resolve) => setTimeout(resolve, 600));
-  const verifyToken = createVerification(email);
-  return { status: "ok", devVerifyUrl: `/track/${verifyToken}` };
+  await apiFetch("/api/public/tickets/lookup/", { method: "POST", body: { query: email } });
+  return { status: "ok" };
 }
 
 export interface TrackedTicketList {
@@ -84,10 +66,11 @@ export interface TrackedTicketList {
   tickets: Ticket[];
 }
 
-// Stands in for GET /api/public/tickets/track/<verify_token>/ until the Django backend exists.
+// GET /api/public/tickets/track/<verify_token>/
 export async function getTrackedTickets(verifyToken: string): Promise<TrackedTicketList | null> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const resolved = resolveVerification(verifyToken);
-  if (!resolved) return null;
-  return { email: resolved.email, tickets: findTicketsByEmail(resolved.email) };
+  const data = await apiFetch<{ email: string; tickets: Parameters<typeof mapTicketSummary>[0][] }>(
+    `/api/public/tickets/track/${encodeURIComponent(verifyToken)}/`,
+  );
+  if (!data) return null;
+  return { email: data.email, tickets: data.tickets.map(mapTicketSummary) };
 }
