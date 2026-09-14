@@ -70,7 +70,7 @@ npx jest [--watch|--coverage]
 - `report/` — `IncidentForm` (RHF + Zod, `incidentSchema.ts`), `AttachmentUploader` (client-side ≤5MB/≤5 files/type check, mirrored server-side).
 - `track/` — `TrackEntryForm` (parses input as token/URL/email — see §9), `TrackedTicketsView`, `TrackedTicketsTable` (read-only, no quick-edit).
 - `ticket-status/` (shared by public + admin) — `StatusBadge`, `PriorityBadge`, `TicketTimeline`, `ResponseThread`, `AttachmentsList`, `ResponseAttachmentChips`.
-- `admin/` — `DashboardTabs`, `TicketTable`, `TicketFilters`, `Pagination` (both own their URL query params directly), `QuickEditControls`; `ticket-detail/`: `StatusUpdatePanel` (explicit "Update status" button — not instant, since it emails the client), `PrioritySelect` (applies immediately, no email), `ClientDetailsCard`, `MessageThread`, `AdminReplyForm` (message + files + notify-client toggle).
+- `admin/` — `DashboardTabs`, `TicketFilters`, `Pagination` (both own their URL query params directly), `QuickEditControls`; `TicketListPanel` owns row selection (per-page, resets on filter/page change) and the delete-selected action bar, passed down into `TicketTable` (header select-all checkbox + per-row checkboxes, indeterminate when some but not all of the current page is selected); `ticket-detail/`: `StatusUpdatePanel` (explicit "Update status" button — not instant, since it emails the client), `PrioritySelect` (applies immediately, no email), `ClientDetailsCard`, `MessageThread`, `AdminReplyForm` (message + files + notify-client toggle).
 - `analytics/` — `MetricCard` ×3, `StatusDistributionChart`, `ResolutionVelocityChart` (plain bars, no chart lib needed at this scale).
 
 **`lib/`:** `api/client.ts` fetch wrapper (`credentials:"include"`, `X-CSRFToken` from the `csrftoken` cookie on unsafe methods, throws `ApiError`, `null` on 404/204) · `api/mappers.ts` (backend snake_case → frontend camelCase) · `api/{auth,tickets,admin,analytics}.ts` · `validation/*Schema.ts` (Zod) · `ticket-meta.ts`, `format.ts` · `types/ticket.ts`, `types/analytics.ts`.
@@ -168,8 +168,10 @@ Indices: `Ticket.token`, `Client.token`, `Client.email`, `Ticket.status`, `Ticke
 | GET | `/tickets/` | `?status=&priority=&search=&page=`. DRF pagination, `PAGE_SIZE=20`, response `{count, next, previous, results}`. |
 | GET | `/tickets/<id>/` | Full detail incl. responses, by internal id. |
 | PATCH | `/tickets/<id>/` | Update `status`/`priority`; status change fires the notification signal. |
+| DELETE | `/tickets/<id>/` | Delete one ticket. Cascades to its responses/attachments (DB) and removes attachment files from storage. |
+| POST | `/tickets/bulk-delete/` | `{ids: [...]}` (1-500 UUIDs). Same delete path as above, batched — used for both a single dashboard-selected ticket and mass delete via select-all. Returns `{deleted: n}`; unmatched ids are silently skipped, not an error. |
 | POST | `/tickets/<id>/responses/` | Admin reply. JSON or multipart. `{message, notify_client=true, attachments?}` — email sent only when `notify_client` is true. |
-| GET | `/analytics/summary/` | Counts by status/priority, open-vs-closed, avg/median resolution time. |
+| GET | `/analytics/summary/` | Counts by status/priority, open-vs-closed, avg resolution time. |
 
 Admin auth mechanics: `POST /login/` looks up `auth.User` by email (`is_staff=True`), `authenticate()`/`login()`, then `get_token(request)` to set the CSRF cookie. Every subsequent `PATCH`/`POST` under `/api/admin/` must echo that cookie as `X-CSRFToken`.
 

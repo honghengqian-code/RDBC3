@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { listTickets, updateTicket, type UpdateTicketPatch } from "@/lib/api/admin";
+import { deleteTickets, listTickets, updateTicket, type UpdateTicketPatch } from "@/lib/api/admin";
 import type { Ticket } from "@/lib/types/ticket";
 
 type ListState =
@@ -77,6 +77,29 @@ export function useTicketList() {
     [load],
   );
 
+  const deleteSelected = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      try {
+        const deleted = await deleteTickets(ids);
+        console.info("[useTicketList] tickets deleted", { count: deleted });
+        if (deleted !== ids.length) {
+          // Not an error — someone else may have deleted one first — but
+          // worth knowing about if counts are ever off.
+          console.warn("[useTicketList] delete count mismatch", { requested: ids.length, deleted });
+        }
+      } catch (error) {
+        console.error("[useTicketList] failed to delete tickets", { ids, error });
+        throw error;
+      } finally {
+        // Deleting can change which page even exists (e.g. emptying the last
+        // page), so re-fetch from the server rather than patch local state.
+        await load();
+      }
+    },
+    [load],
+  );
+
   const tickets = state.status === "ready" ? state.tickets : [];
   const total = state.status === "ready" ? state.grandTotal : 0;
   const matchingCount = state.status === "ready" ? state.matchingCount : 0;
@@ -88,6 +111,7 @@ export function useTicketList() {
     matchingCount,
     page,
     patchTicket,
+    deleteSelected,
     refetch: load,
   };
 }

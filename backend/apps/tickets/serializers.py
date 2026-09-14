@@ -1,8 +1,12 @@
+import logging
+
 from django.conf import settings
 from django.db.models import Q
 from rest_framework import serializers
 
 from apps.tickets.models import Attachment, Client, Response, Ticket
+
+logger = logging.getLogger(__name__)
 
 
 def validate_attachment_files(files: list) -> list:
@@ -41,13 +45,21 @@ def delete_ticket_attachments(ticket) -> int:
     CASCADE clears the Attachment/Response DB rows automatically once the
     Ticket is deleted, but Django never touches the underlying files on a
     cascade delete — those have to be removed explicitly, or they're
-    orphaned on disk forever.
+    orphaned on disk forever. A storage failure on one file (permissions,
+    already-missing, transient disk error) must not abort the ticket
+    delete itself — the DB row is the source of truth the admin is acting
+    on, not the file — so failures are logged and skipped, not raised.
     """
     attachments = Attachment.objects.filter(Q(ticket=ticket) | Q(response__ticket=ticket))
     count = 0
     for attachment in attachments:
-        attachment.file.delete(save=False)
-        count += 1
+        try:
+            attachment.file.delete(save=False)
+            count += 1
+        except Exception:
+            logger.exception(
+                "Failed to delete attachment file id=%s ticket=%s", attachment.id, ticket.id
+            )
     return count
 
 

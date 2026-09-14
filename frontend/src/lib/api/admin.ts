@@ -51,6 +51,16 @@ export async function updateTicket(id: string, patch: UpdateTicketPatch): Promis
   return mapTicketDetail(data);
 }
 
+// POST /api/admin/tickets/bulk-delete/ — also used to delete a single selected ticket,
+// since the dashboard never needs to distinguish the two.
+export async function deleteTickets(ids: string[]): Promise<number> {
+  const data = await apiFetch<{ deleted: number }>("/api/admin/tickets/bulk-delete/", {
+    method: "POST",
+    body: { ids },
+  });
+  return data?.deleted ?? 0;
+}
+
 export interface TicketDetail {
   ticket: Ticket;
   responses: TicketResponse[];
