@@ -13,14 +13,32 @@ export function SuccessPanel({
   onReset: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
 
   const copyLink = async () => {
     try {
-      await navigator.clipboard.writeText(link);
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(link);
+      } else {
+        // Clipboard API unavailable (e.g. insecure context) — fall back to
+        // the legacy selection-based copy so the button still works.
+        const textarea = document.createElement("textarea");
+        textarea.value = link;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (!ok) throw new Error("execCommand copy failed");
+      }
+      setCopyError(false);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard API unavailable (e.g. insecure context) — link is still visible to copy manually.
+    } catch (error) {
+      console.error("[SuccessPanel] failed to copy tracking link", error);
+      setCopyError(true);
+      window.setTimeout(() => setCopyError(false), 2400);
     }
   };
 
@@ -52,19 +70,23 @@ export function SuccessPanel({
             onClick={copyLink}
             className="btn-focus inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold"
             style={{
-              background: copied ? "var(--ok-soft)" : "var(--accent-soft)",
-              color: copied ? "var(--ok)" : "var(--accent)",
+              background: copyError ? "var(--pri-high-soft)" : copied ? "var(--ok-soft)" : "var(--accent-soft)",
+              color: copyError ? "var(--err)" : copied ? "var(--ok)" : "var(--accent)",
             }}
           >
-            <IconCopy /> {copied ? "Copied" : "Copy"}
+            <IconCopy /> {copyError ? "Couldn't copy" : copied ? "Copied" : "Copy"}
           </button>
         </div>
+        {copyError && (
+          <p className="mt-2 text-xs text-[var(--err)]">
+            Couldn&apos;t copy automatically — select the link above and copy it manually.
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col justify-center gap-2 sm:flex-row">
         <a
           href={link}
-          onClick={(e) => e.preventDefault()}
           className="btn-focus rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-[var(--accent-ink)]"
         >
           Open ticket status page

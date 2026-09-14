@@ -31,6 +31,9 @@ def stamp_resolved_at(sender, instance: Ticket, **kwargs):
     except Ticket.DoesNotExist:
         instance._old_status = None
         return
+    except Exception:
+        logger.exception("Failed to look up previous ticket status id=%s", instance.pk)
+        raise
 
     if instance.status == Ticket.Status.RESOLVED and previous.status != Ticket.Status.RESOLVED:
         instance.resolved_at = timezone.now()

@@ -28,15 +28,20 @@ def validate_attachment_files(files: list) -> list:
 
 
 def create_attachments(files: list, *, ticket=None, response=None) -> None:
-    for f in files:
-        Attachment.objects.create(
-            ticket=ticket,
-            response=response,
-            file=f,
-            original_name=f.name,
-            size=f.size,
-            content_type=f.content_type or "",
-        )
+    owner_id = ticket.id if ticket is not None else (response.id if response is not None else None)
+    try:
+        for f in files:
+            Attachment.objects.create(
+                ticket=ticket,
+                response=response,
+                file=f,
+                original_name=f.name,
+                size=f.size,
+                content_type=f.content_type or "",
+            )
+    except Exception:
+        logger.exception("Failed to save attachment owner=%s filename=%s", owner_id, f.name)
+        raise
 
 
 def delete_ticket_attachments(ticket) -> int:
@@ -169,13 +174,17 @@ class TicketCreateSerializer(serializers.ModelSerializer):
         name = validated_data.pop("name")
         email = validated_data.pop("email")
         files = validated_data.pop("attachments", [])
-        client, created = Client.objects.get_or_create(
-            email=email.strip().lower(), defaults={"name": name}
-        )
-        if not created and client.name != name:
-            client.name = name
-            client.save(update_fields=["name"])
-        ticket = Ticket.objects.create(client=client, **validated_data)
+        try:
+            client, created = Client.objects.get_or_create(
+                email=email.strip().lower(), defaults={"name": name}
+            )
+            if not created and client.name != name:
+                client.name = name
+                client.save(update_fields=["name"])
+            ticket = Ticket.objects.create(client=client, **validated_data)
+        except Exception:
+            logger.exception("Failed to create ticket/client record")
+            raise
         create_attachments(files, ticket=ticket)
         return ticket
 

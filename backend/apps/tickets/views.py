@@ -87,11 +87,15 @@ class PublicTicketResponseCreateView(APIView):
         ticket = get_object_or_404(Ticket, token=token)
         serializer = ClientResponseCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        response_obj = Response.objects.create(
-            ticket=ticket,
-            author_type=Response.AuthorType.CLIENT,
-            message=serializer.validated_data["message"],
-        )
+        try:
+            response_obj = Response.objects.create(
+                ticket=ticket,
+                author_type=Response.AuthorType.CLIENT,
+                message=serializer.validated_data["message"],
+            )
+        except Exception:
+            logger.exception("Failed to save client response ticket=%s", ticket.id)
+            raise
         logger.info("Client response added ticket=%s response=%s", ticket.id, response_obj.id)
         out = ResponseSerializer(response_obj, context={"request": request})
         return DRFResponse(out.data, status=status.HTTP_201_CREATED)
@@ -112,7 +116,12 @@ class PublicTicketLookupView(APIView):
 
         token = extract_ticket_token(query)
         if token:
-            if Ticket.objects.filter(token=token).exists():
+            try:
+                token_exists = Ticket.objects.filter(token=token).exists()
+            except Exception:
+                logger.exception("Track lookup DB query failed token=%s", token)
+                raise
+            if token_exists:
                 logger.info("Track lookup resolved to ticket token=%s", token)
                 return DRFResponse({"redirect": f"/tickets/{token}"})
             logger.info("Track lookup token-shaped but not found")
@@ -142,12 +151,16 @@ class PublicTrackedTicketsView(APIView):
                 {"detail": "This link is invalid or has expired."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        tickets = (
-            Ticket.objects.select_related("client")
-            .filter(client__email__iexact=email)
-            .order_by("-created_at")
-        )
-        logger.info("Track verification resolved, %d ticket(s)", tickets.count())
+        try:
+            tickets = list(
+                Ticket.objects.select_related("client")
+                .filter(client__email__iexact=email)
+                .order_by("-created_at")
+            )
+        except Exception:
+            logger.exception("Track verification ticket lookup failed")
+            raise
+        logger.info("Track verification resolved, %d ticket(s)", len(tickets))
         return DRFResponse(
             {
                 "email": email,
@@ -168,13 +181,27 @@ class AdminLoginView(APIView):
 
         user = None
         try:
-            candidate = User.objects.get(email__iexact=email, is_staff=True)
-            user = authenticate(request, username=candidate.username, password=password)
-        except User.DoesNotExist:
-            user = None
+            candidates = list(User.objects.filter(email__iexact=email, is_staff=True))
         except Exception:
             logger.exception("Admin login lookup failed")
-            user = None
+            candidates = []
+
+        if len(candidates) > 1:
+            # The built-in auth.User model has no unique constraint on email,
+            # so two staff accounts can end up sharing one (e.g. running
+            # createsuperuser twice for the same address). A plain .get()
+            # here would raise MultipleObjectsReturned and lock out every
+            # password for that email — instead, try each candidate so login
+            # still works, and log it so the duplicate gets noticed/cleaned up.
+            logger.warning(
+                "Multiple staff users share email=%s (%d accounts)", email, len(candidates)
+            )
+
+        for candidate in candidates:
+            authenticated = authenticate(request, username=candidate.username, password=password)
+            if authenticated is not None:
+                user = authenticated
+                break
 
         if user is None:
             logger.info("Admin login failed")
@@ -247,7 +274,11 @@ class AdminTicketDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        ticket = serializer.save()
+        try:
+            ticket = serializer.save()
+        except Exception:
+            logger.exception("Ticket update failed id=%s", instance.id)
+            raise
         logger.info(
             "Ticket updated id=%s status=%s priority=%s", ticket.id, ticket.status, ticket.priority
         )
@@ -255,8 +286,12 @@ class AdminTicketDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         ticket_id = instance.id
-        removed_files = delete_ticket_attachments(instance)
-        instance.delete()
+        try:
+            removed_files = delete_ticket_attachments(instance)
+            instance.delete()
+        except Exception:
+            logger.exception("Ticket delete failed id=%s", ticket_id)
+            raise
         logger.info("Ticket deleted id=%s attachments_removed=%d", ticket_id, removed_files)
 
 
@@ -268,13 +303,17 @@ class AdminTicketBulkDeleteView(APIView):
         serializer.is_valid(raise_exception=True)
         ids = serializer.validated_data["ids"]
 
-        tickets = list(Ticket.objects.filter(id__in=ids))
-        removed_files = 0
-        deleted_ids = []
-        for ticket in tickets:
-            removed_files += delete_ticket_attachments(ticket)
-            deleted_ids.append(ticket.id)
-            ticket.delete()
+        try:
+            tickets = list(Ticket.objects.filter(id__in=ids))
+            removed_files = 0
+            deleted_ids = []
+            for ticket in tickets:
+                removed_files += delete_ticket_attachments(ticket)
+                deleted_ids.append(ticket.id)
+                ticket.delete()
+        except Exception:
+            logger.exception("Bulk ticket delete failed requested=%d", len(ids))
+            raise
 
         logger.info(
             "Bulk ticket delete requested=%d deleted=%d attachments_removed=%d",
@@ -296,14 +335,18 @@ class AdminTicketResponseCreateView(APIView):
         notify_client = serializer.validated_data.get("notify_client", True)
         files = serializer.validated_data.get("attachments", [])
 
-        response_obj = Response(
-            ticket=ticket,
-            author_type=Response.AuthorType.ADMIN,
-            message=serializer.validated_data["message"],
-        )
-        response_obj._notify_client = notify_client
-        response_obj.save()
-        create_attachments(files, response=response_obj)
+        try:
+            response_obj = Response(
+                ticket=ticket,
+                author_type=Response.AuthorType.ADMIN,
+                message=serializer.validated_data["message"],
+            )
+            response_obj._notify_client = notify_client
+            response_obj.save()
+            create_attachments(files, response=response_obj)
+        except Exception:
+            logger.exception("Failed to save admin response ticket=%s", ticket.id)
+            raise
 
         logger.info(
             "Admin response added ticket=%s response=%s notify_client=%s attachments=%d",
