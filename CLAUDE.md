@@ -437,6 +437,7 @@ bookmarkable.
 | field | type | notes |
 |---|---|---|
 | `id` | UUID (PK) | default `uuid4` |
+| `name` | CharField(150) | required — not in the original schema draft; added once the report form (which always collects a name) and the admin `ClientDetailsCard` (which displays one) made the gap concrete. A returning client's most recently submitted name overwrites the stored one. |
 | `email` | EmailField | indexed; not unique alone — a client may not need a distinct row per email if we key strictly by ticket token (decide: either one `Client` row per submission, or dedupe by email — default to **dedupe by email** so a returning client's tickets can be looked up by email + token together) |
 | `token` | UUID | unique, indexed, `default=uuid4` — used for the client-facing access link |
 | `created_at` | DateTimeField | `auto_now_add=True` |
@@ -530,10 +531,19 @@ required for MVP schema lock-in.
 | POST | `/api/admin/tickets/<id>/responses/` | Add an admin response/comment to a ticket. Body: `{ message, notify_client? }` (`notify_client` defaults `true`). Triggers the client-notification email only when `notify_client` is true, so an admin can post several replies and only notify on the last. |
 | GET | `/api/admin/analytics/summary/` | Aggregate counts: by status, by priority, open-vs-closed, avg/median resolution time. |
 
-Auth for `/api/admin/*`: DRF session auth (backed by Django admin login) or
-token auth, gated by `IsAdminUser`/`IsAuthenticated` permission classes —
-finalize exact mechanism at implementation time, but it must be distinct from
-the client token scheme and must never accept a `Ticket.token` as credential.
+Auth for `/api/admin/*`: DRF `SessionAuthentication` — `POST
+/api/admin/auth/login/` looks up a Django `auth.User` by `email` (must have
+`is_staff=True`), calls `authenticate()`/`login()` on match, and forces a
+`csrftoken` cookie onto the response via `get_token(request)`. Every
+subsequent unsafe request (`PATCH`/`POST` under `/api/admin/`) must echo that
+cookie's value back as an `X-CSRFToken` header — DRF's `SessionAuthentication`
+enforces Django's normal CSRF protection, and an API-only SPA has no
+server-rendered form to source the token from otherwise. `IsAdminUser` (in
+`apps/tickets/permissions.py`) gates every admin view on `is_staff`; this is
+intentionally distinct from the client token scheme and never accepts a
+`Ticket.token` as credential. `python manage.py seed_demo_data` creates a demo
+admin (`admin@example.com` / `admin12345`) and a few demo tickets for local
+dev.
 
 ### 3.5 Email Notification Flow
 
