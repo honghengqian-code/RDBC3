@@ -16,4 +16,7 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# Production default. docker-compose.override.yml (dev) replaces this with
+# migrate + runserver; docker-compose.prod.yml wraps it with migrate +
+# collectstatic before gunicorn starts.
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]

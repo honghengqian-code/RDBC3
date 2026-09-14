@@ -1,9 +1,12 @@
 # Local dev overrides: hot reload via bind mounts, dev servers instead of
-# production builds. Compose merges this over docker-compose.yml automatically.
+# production builds, and direct host ports (no nginx in front locally).
+# Compose merges this over docker-compose.yml automatically.
 services:
   backend:
     volumes:
       - ./backend:/app
+    ports:
+      - "8000:8000"
     command: >
       sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
 
@@ -12,4 +15,6 @@ services:
       - ./frontend:/app
       - /app/node_modules
       - /app/.next
+    ports:
+      - "3000:3000"
     command: npm run dev
