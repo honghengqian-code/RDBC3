@@ -216,18 +216,26 @@ src/
 │   │                                   #   rows link to "/tickets/[token]"
 │   ├── ticket-status/
 │   │   ├── StatusBadge.tsx
+│   │   ├── PriorityBadge.tsx
 │   │   ├── TicketTimeline.tsx
-│   │   └── ResponseThread.tsx
+│   │   ├── ResponseThread.tsx
+│   │   ├── AttachmentsList.tsx        # ticket-level attachments (report-form uploads) — lives
+│   │   │                               #   here, not under admin/, because both the public
+│   │   │                               #   Ticket Status Page and the admin detail page render it
+│   │   └── ResponseAttachmentChips.tsx # compact per-reply attachment chips, shared by
+│   │                                   #   MessageThread (admin) and ResponseThread (public)
 │   ├── admin/
 │   │   ├── DashboardTabs.tsx          # "Ticket List" / "Analytics" tab switcher
 │   │   ├── TicketTable.tsx            # rows link to "/admin/tickets/[id]"
 │   │   ├── TicketFilters.tsx
+│   │   ├── Pagination.tsx             # Prev/Next + "Page N of M"; reads/writes its own
+│   │   │                               #   `?page=` param, same self-contained pattern as
+│   │   │                               #   TicketFilters; hidden when everything fits on one page
 │   │   ├── QuickEditControls.tsx      # inline priority/status editors (dashboard table)
 │   │   └── ticket-detail/
 │   │       ├── StatusUpdatePanel.tsx  # status select + explicit "Update status" button
 │   │       ├── PrioritySelect.tsx     # applies immediately, no confirm step
 │   │       ├── ClientDetailsCard.tsx
-│   │       ├── AttachmentsList.tsx
 │   │       ├── MessageThread.tsx      # Admin vs Client bubbles, "self" aligned right
 │   │       └── AdminReplyForm.tsx     # textarea + attach files + notify-client toggle
 │   └── analytics/
@@ -323,7 +331,9 @@ bookmarkable.
   - `title` — required, min 5 / max 150 chars.
   - `description` — required, min 20 chars.
   - `attachments` — optional, file list, client-side size/type validation
-    (e.g. ≤5MB, images/pdf/text) before upload.
+    (≤5MB, images/pdf/text, ≤5 files) before upload — and the same limits
+    re-enforced server-side (`Attachment`, see 3.2), since client-side
+    validation on a file upload is UX only, never a security boundary.
 - **Submit flow:** `POST /api/public/tickets/` → on success, show confirmation
   screen with the ticket link ("we've also emailed this to you") and a
   copy-to-clipboard action; on failure, surface field-level and top-level
@@ -334,13 +344,16 @@ bookmarkable.
 #### Ticket Status Page (`/tickets/[token]`)
 - **Access model:** token in the URL is the only credential — no login. Invalid
   or unknown token renders a clear "ticket not found" state, not a 500.
-- **Components:** `StatusBadge`, `PriorityBadge`, `TicketTimeline`, `ResponseThread`, `ReplyBox`.
+- **Components:** `StatusBadge`, `PriorityBadge`, `TicketTimeline`, `AttachmentsList`,
+  `ResponseThread`, `ReplyBox`.
 - **Data:** `useTicket(token)` hook fetches `GET /api/public/tickets/:token/`
   on mount and polls on an interval (e.g. every 30s) or revalidates on window
   focus to approximate "real-time" updates without a websocket layer.
 - **Ticket details:** title, description, `StatusBadge`, `PriorityBadge`, and
   the "opened" timestamp are rendered from the fetched `Ticket` at the top of
-  the page.
+  the page, followed by `AttachmentsList` for anything the client uploaded
+  when filing — this is the client's own copy of what they submitted, shown
+  read-only with a "View" link per file.
 - **Timeline:** a 3-step tracker (`Open` → `In Progress` → `Resolved`) derived
   from `status` and the timestamp of each status transition, rendered as a
   horizontal stepper (stacked on narrow screens); the current step is
@@ -349,6 +362,9 @@ bookmarkable.
   (`created_at` ascending), visually distinguishing `author_type` — e.g.
   client messages right-aligned/accent-tinted, admin messages left-aligned/
   neutral-tinted — so the client can tell their own messages from support's.
+  Any files an admin attached to a reply render as compact link chips under
+  that message (`ResponseAttachmentChips`) — client replies never carry
+  attachments, `ReplyBox` has no attach-file UI.
 - **Reply box:** a textarea + submit button pinned under the thread lets the
   client post a new `Response` (`author_type=Client`) directly on their own
   ticket via `POST /api/public/tickets/:token/responses/`; appends optimistically
@@ -363,12 +379,19 @@ bookmarkable.
   List is the default tab.
 
 **Ticket List tab**
-- **Components:** `TicketTable`, `TicketFilters`, `QuickEditControls`.
+- **Components:** `TicketTable`, `TicketFilters`, `Pagination`, `QuickEditControls`.
 - **Filters:** status, priority, free-text search (title/client name/email) —
   reflected in URL query params; `useTicketList` reads `searchParams` and
-  calls `GET /api/admin/tickets/?status=&priority=&search=`. A visible
+  calls `GET /api/admin/tickets/?status=&priority=&search=&page=`. A visible
   "Showing X of Y" count and a "Clear filters" action appear whenever a
-  filter is active.
+  filter is active — X is the server-reported count matching the active
+  filter (`ListTicketsResult.count`, not just the current page's row count),
+  Y is the grand unfiltered total. Changing any filter resets `?page=` back
+  to 1 (a stale page number can outlive the filter that made it valid).
+- **Pagination:** `Pagination` renders Prev/Next + "Page N of M" below the
+  table, reading/writing its own `?page=` param the same self-contained way
+  `TicketFilters` owns status/priority/search; hidden entirely when the
+  filtered set fits on one page (`PAGE_SIZE=20`).
 - **Quick-edit:** inline pill-styled `<select>` per row for `status` and for
   `priority`, colored to match the corresponding badge; changing either fires
   `PATCH /api/admin/tickets/:id/` optimistically, rolling back on error.
@@ -400,7 +423,8 @@ bookmarkable.
     bubble-aligned relative to the viewer — the logged-in admin's own replies
     align right ("You"), the client's align left — the mirror image of the
     public Ticket Status Page, where the client sees their own messages on
-    the right instead.
+    the right instead. Reply attachments render via `ResponseAttachmentChips`,
+    same shared component the public thread uses.
   - `AdminReplyForm`: a textarea, an "Attach files" control, and an
     **Auto-notify client via email** checkbox (checked by default) — lets an
     admin post several quick internal-facing replies without emailing the
@@ -466,14 +490,29 @@ bookmarkable.
 | `message` | TextField | required |
 | `created_at` | DateTimeField | `auto_now_add=True` |
 
+**`Attachment`**
+| field | type | notes |
+|---|---|---|
+| `id` | UUID (PK) | default `uuid4` |
+| `ticket` | FK → `Ticket`, nullable | set for a file attached at ticket creation (report form) |
+| `response` | FK → `Response`, nullable | set for a file attached to a reply (admin only — the client's `ReplyBox` has no attach UI) |
+| `file` | FileField | `upload_to=attachment_upload_path` → `media/attachments/<ticket_or_response_id>/<uuid>_<filename>`; served from local disk in dev (`MEDIA_ROOT`/`MEDIA_URL`, Django's dev-only `static()` helper) — swap the storage backend for S3/GCS at deployment, no model change needed |
+| `original_name`, `size`, `content_type` | CharField / PositiveIntegerField / CharField | cached off the upload at write time so listing doesn't need to hit storage |
+| `created_at` | DateTimeField | `auto_now_add=True` |
+
+Exactly one of `ticket`/`response` is set per row — enforced in the serializers
+that create these (`apps/tickets/serializers.py`: `validate_attachment_files`
++ `create_attachments`), not a DB-level `CheckConstraint`, since duplicating
+the same rule at both layers buys nothing at this scale. Server-side limits
+(never just client-side): ≤5MB per file, ≤5 files per request, content-type
+allowlist (`png`/`jpeg`/`gif`/`pdf`/`text/plain`/`csv`) — see
+`settings.ATTACHMENT_*`. Unrestricted upload size/type is a real risk
+(disk exhaustion, arbitrary file upload), so these are enforced in
+`TicketCreateSerializer`/`AdminResponseCreateSerializer` regardless of what
+the frontend's `AttachmentUploader` already blocks client-side.
+
 Indices: `Ticket.token`, `Client.token`, `Client.email`, `Ticket.status`,
 `Ticket.priority` (filter/sort targets for the admin dashboard and analytics).
-
-Attachments (from the reporting form, and optionally from an admin reply) are
-out of scope for the core schema above — model as a future `Attachment` with a
-`FileField` storing to a media volume/bucket, FK'd to `Ticket` for files
-attached at creation and to `Response` for files attached to a reply; not
-required for MVP schema lock-in.
 
 ### 3.3 Non-Login Access Logic
 
@@ -518,7 +557,7 @@ required for MVP schema lock-in.
 **Public (token-based, no login) — prefix `/api/public/`**
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/public/tickets/` | Create a ticket (name, email, title, description, attachments). Returns ticket incl. `token`. Triggers confirmation email. |
+| POST | `/api/public/tickets/` | Create a ticket (name, email, title, description, attachments). JSON or `multipart/form-data` — multipart only needed when `attachments` files are present; the frontend switches automatically (`lib/api/tickets.ts`). Returns the full ticket incl. `token` and its (now-real) `attachments`. Triggers confirmation email. |
 | GET | `/api/public/tickets/<token>/` | Fetch one ticket + its responses, by token. 404 if token invalid. |
 | POST | `/api/public/tickets/<token>/responses/` | Client reply: add a `Response` with `author_type=Client` to their own ticket, resolved by token (never by id/login). Triggers a notification email to the admin(s) watching the ticket. |
 | POST | `/api/public/tickets/lookup/` | `/track` entry lookup. Body: `{ query }`. If `query` matches a `Ticket.token` (bare or extracted from a pasted ticket URL), returns `{ redirect: "/tickets/<token>" }`. Otherwise (treated as an email) always returns the same generic `{ status: "ok" }` and emails a one-time link to `/track/<verify_token>` — never confirms existence or returns ticket data in the response itself. |
@@ -534,10 +573,10 @@ required for MVP schema lock-in.
 **Admin (authenticated) — prefix `/api/admin/`**
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/admin/tickets/` | List tickets; supports `?status=`, `?priority=`, `?search=`, pagination. |
+| GET | `/api/admin/tickets/` | List tickets; supports `?status=`, `?priority=`, `?search=`, `?page=`. DRF `PageNumberPagination`, `PAGE_SIZE=20` (`REST_FRAMEWORK` in settings) — response is `{ count, next, previous, results }`; the frontend's `Pagination` component reads `count` and duplicates `PAGE_SIZE` as `ADMIN_PAGE_SIZE` (`lib/api/admin.ts`) since there's no endpoint that reports it. |
 | GET | `/api/admin/tickets/<id>/` | Retrieve one ticket (by internal id) with full response history. |
 | PATCH | `/api/admin/tickets/<id>/` | Update `status` and/or `priority` (quick-edit). Triggers status-change signal if `status` changed. |
-| POST | `/api/admin/tickets/<id>/responses/` | Add an admin response/comment to a ticket. Body: `{ message, notify_client? }` (`notify_client` defaults `true`). Triggers the client-notification email only when `notify_client` is true, so an admin can post several replies and only notify on the last. |
+| POST | `/api/admin/tickets/<id>/responses/` | Add an admin response/comment to a ticket. JSON or multipart (same auto-switch as ticket creation, whenever files are attached). Body: `{ message, notify_client?, attachments? }` (`notify_client` defaults `true`). Triggers the client-notification email only when `notify_client` is true, so an admin can post several replies and only notify on the last. |
 | GET | `/api/admin/analytics/summary/` | Aggregate counts: by status, by priority, open-vs-closed, avg/median resolution time. |
 
 Auth for `/api/admin/*`: DRF `SessionAuthentication` — `POST

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useTicket } from "@/hooks/useTicket";
+import { AttachmentsList } from "@/components/ticket-status/AttachmentsList";
 import { PriorityBadge } from "@/components/ticket-status/PriorityBadge";
 import { ReplyBox } from "@/components/ticket-status/ReplyBox";
 import { ResponseThread } from "@/components/ticket-status/ResponseThread";
@@ -126,6 +127,7 @@ export function TicketStatusView({ token }: { token: string }) {
         <p className="rounded-lg bg-[var(--surface-2)] p-4 text-sm leading-relaxed text-[var(--ink)]">
           {ticket.description}
         </p>
+        <AttachmentsList attachments={ticket.attachments} />
 
         <p className="font-mono mt-4 truncate text-[0.7rem] text-[var(--muted)]">
           token · {ticket.token}

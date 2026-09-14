@@ -3,11 +3,11 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { AdminReplyForm } from "@/components/admin/ticket-detail/AdminReplyForm";
-import { AttachmentsList } from "@/components/admin/ticket-detail/AttachmentsList";
 import { ClientDetailsCard } from "@/components/admin/ticket-detail/ClientDetailsCard";
 import { MessageThread } from "@/components/admin/ticket-detail/MessageThread";
 import { PrioritySelect } from "@/components/admin/ticket-detail/PrioritySelect";
 import { StatusUpdatePanel } from "@/components/admin/ticket-detail/StatusUpdatePanel";
+import { AttachmentsList } from "@/components/ticket-status/AttachmentsList";
 import { PriorityBadge } from "@/components/ticket-status/PriorityBadge";
 import { StatusBadge } from "@/components/ticket-status/StatusBadge";
 import { IconArrowLeft } from "@/components/ui/icons";

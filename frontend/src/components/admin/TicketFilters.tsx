@@ -23,6 +23,9 @@ export function TicketFilters({ total, showing }: { total: number; showing: numb
       if (!value || value === "All") params.delete(key);
       else params.set(key, value);
     }
+    // Any filter change invalidates the current page — e.g. page 3 of an
+    // unfiltered list may not exist once a filter narrows the result set.
+    params.delete("page");
     router.push(`${pathname}${params.toString() ? `?${params}` : ""}`);
   };
 

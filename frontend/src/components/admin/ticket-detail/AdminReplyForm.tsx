@@ -6,8 +6,16 @@ import { formatBytes } from "@/lib/format";
 
 interface AttachedFileMeta {
   id: string;
-  name: string;
-  size: number;
+  file: File;
+}
+
+const MAX_FILES = 5;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_EXT = [".png", ".jpg", ".jpeg", ".gif", ".pdf", ".txt", ".log", ".csv"];
+
+function extOf(name: string) {
+  const i = name.lastIndexOf(".");
+  return i === -1 ? "" : name.slice(i).toLowerCase();
 }
 
 export function AdminReplyForm({
@@ -15,7 +23,7 @@ export function AdminReplyForm({
   onSend,
 }: {
   clientName: string;
-  onSend: (message: string, notifyClient: boolean) => Promise<void>;
+  onSend: (message: string, notifyClient: boolean, files: File[]) => Promise<void>;
 }) {
   const [message, setMessage] = useState("");
   const [files, setFiles] = useState<AttachedFileMeta[]>([]);
@@ -26,10 +34,26 @@ export function AdminReplyForm({
   const fileRef = useRef<HTMLInputElement>(null);
 
   const addFiles = (list: FileList) => {
-    setFiles((prev) => [
-      ...prev,
-      ...Array.from(list).map((f) => ({ id: `${f.name}-${f.size}`, name: f.name, size: f.size })),
-    ]);
+    const incoming = Array.from(list);
+    let err = "";
+    const next = [...files];
+    for (const file of incoming) {
+      if (next.length >= MAX_FILES) {
+        err = `You can attach up to ${MAX_FILES} files.`;
+        break;
+      }
+      if (file.size > MAX_FILE_BYTES) {
+        err = `"${file.name}" is over the 5MB limit.`;
+        continue;
+      }
+      if (!ALLOWED_EXT.includes(extOf(file.name))) {
+        err = `"${file.name}" isn't a supported file type.`;
+        continue;
+      }
+      next.push({ id: `${file.name}-${file.size}-${file.lastModified}`, file });
+    }
+    setFiles(next);
+    setError(err || null);
   };
   const removeFile = (id: string) => setFiles((prev) => prev.filter((f) => f.id !== id));
 
@@ -40,7 +64,11 @@ export function AdminReplyForm({
     setSending(true);
     setError(null);
     try {
-      await onSend(trimmed, notify);
+      await onSend(
+        trimmed,
+        notify,
+        files.map((f) => f.file),
+      );
       setSentNote(notify ? "Reply sent · client notified by email" : "Reply sent · client not notified");
       setMessage("");
       setFiles([]);
@@ -77,12 +105,12 @@ export function AdminReplyForm({
               key={f.id}
               className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--ink)]"
             >
-              <IconFile width={13} height={13} /> {f.name}
-              <span className="tabular-nums text-[var(--muted)]">{formatBytes(f.size)}</span>
+              <IconFile width={13} height={13} /> {f.file.name}
+              <span className="tabular-nums text-[var(--muted)]">{formatBytes(f.file.size)}</span>
               <button
                 type="button"
                 onClick={() => removeFile(f.id)}
-                aria-label={`Remove ${f.name}`}
+                aria-label={`Remove ${f.file.name}`}
                 className="text-[var(--muted)]"
               >
                 <IconX />
@@ -106,6 +134,7 @@ export function AdminReplyForm({
             type="file"
             multiple
             className="sr-only"
+            accept={ALLOWED_EXT.join(",")}
             onChange={(e) => {
               if (e.target.files?.length) addFiles(e.target.files);
               e.target.value = "";

@@ -1,14 +1,63 @@
+from django.conf import settings
 from rest_framework import serializers
 
-from apps.tickets.models import Client, Response, Ticket
+from apps.tickets.models import Attachment, Client, Response, Ticket
+
+
+def validate_attachment_files(files: list) -> list:
+    """Shared server-side validation for both attach points (ticket
+    creation, admin reply) — the frontend's AttachmentUploader enforces the
+    same limits, but that's UX only; file uploads must never trust the
+    client alone (unrestricted size/type is a real disk-exhaustion /
+    arbitrary-upload risk)."""
+    if len(files) > settings.ATTACHMENT_MAX_COUNT:
+        raise serializers.ValidationError(
+            f"You can attach up to {settings.ATTACHMENT_MAX_COUNT} files."
+        )
+    for f in files:
+        if f.size > settings.ATTACHMENT_MAX_BYTES:
+            raise serializers.ValidationError(f'"{f.name}" is over the 5MB limit.')
+        if f.content_type not in settings.ATTACHMENT_ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError(f'"{f.name}" isn\'t a supported file type.')
+    return files
+
+
+def create_attachments(files: list, *, ticket=None, response=None) -> None:
+    for f in files:
+        Attachment.objects.create(
+            ticket=ticket,
+            response=response,
+            file=f,
+            original_name=f.name,
+            size=f.size,
+            content_type=f.content_type or "",
+        )
+
+
+class AttachmentSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="original_name", read_only=True)
+    kind = serializers.SerializerMethodField()
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Attachment
+        fields = ["id", "name", "size", "kind", "url"]
+
+    def get_kind(self, obj: Attachment) -> str:
+        return "image" if obj.content_type.startswith("image/") else "file"
+
+    def get_url(self, obj: Attachment) -> str:
+        request = self.context.get("request")
+        return request.build_absolute_uri(obj.file.url) if request else obj.file.url
 
 
 class ResponseSerializer(serializers.ModelSerializer):
     author = serializers.SerializerMethodField()
+    attachments = AttachmentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Response
-        fields = ["id", "author_type", "author", "message", "created_at"]
+        fields = ["id", "author_type", "author", "message", "created_at", "attachments"]
 
     def get_author(self, obj: Response) -> str:
         return "Support" if obj.author_type == Response.AuthorType.ADMIN else obj.ticket.client.name
@@ -52,17 +101,21 @@ class TicketPublicSerializer(serializers.ModelSerializer):
         return history
 
     def get_attachments(self, obj: Ticket) -> list:
-        # Attachment model is out of scope for MVP — see CLAUDE.md 3.2.
-        return []
+        return AttachmentSerializer(
+            obj.ticket_attachments.all(), many=True, context=self.context
+        ).data
 
 
 class TicketCreateSerializer(serializers.ModelSerializer):
     name = serializers.CharField(max_length=150, write_only=True)
     email = serializers.EmailField(write_only=True)
+    attachments = serializers.ListField(
+        child=serializers.FileField(), required=False, write_only=True
+    )
 
     class Meta:
         model = Ticket
-        fields = ["name", "email", "title", "description"]
+        fields = ["name", "email", "title", "description", "attachments"]
 
     def validate_title(self, value: str) -> str:
         if len(value.strip()) < 5:
@@ -74,16 +127,22 @@ class TicketCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Description must be at least 20 characters.")
         return value
 
+    def validate_attachments(self, value: list) -> list:
+        return validate_attachment_files(value)
+
     def create(self, validated_data) -> Ticket:
         name = validated_data.pop("name")
         email = validated_data.pop("email")
+        files = validated_data.pop("attachments", [])
         client, created = Client.objects.get_or_create(
             email=email.strip().lower(), defaults={"name": name}
         )
         if not created and client.name != name:
             client.name = name
             client.save(update_fields=["name"])
-        return Ticket.objects.create(client=client, **validated_data)
+        ticket = Ticket.objects.create(client=client, **validated_data)
+        create_attachments(files, ticket=ticket)
+        return ticket
 
 
 class ClientResponseCreateSerializer(serializers.ModelSerializer):
@@ -99,15 +158,21 @@ class ClientResponseCreateSerializer(serializers.ModelSerializer):
 
 class AdminResponseCreateSerializer(serializers.ModelSerializer):
     notify_client = serializers.BooleanField(write_only=True, default=True)
+    attachments = serializers.ListField(
+        child=serializers.FileField(), required=False, write_only=True
+    )
 
     class Meta:
         model = Response
-        fields = ["message", "notify_client"]
+        fields = ["message", "notify_client", "attachments"]
 
     def validate_message(self, value: str) -> str:
         if not value.strip():
             raise serializers.ValidationError("Message can't be empty.")
         return value
+
+    def validate_attachments(self, value: list) -> list:
+        return validate_attachment_files(value)
 
 
 class TicketAdminListSerializer(serializers.ModelSerializer):

@@ -1,9 +1,10 @@
 from django.contrib.auth.models import User
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 
-from apps.tickets.models import Client, Response, Ticket
+from apps.tickets.models import Attachment, Client, Response, Ticket
 
 
 class TicketCreationTests(TestCase):
@@ -44,6 +45,81 @@ class TicketCreationTests(TestCase):
         self.client.post(url, {**base, "title": "Second issue here"}, content_type="application/json")
         self.assertEqual(Client.objects.filter(email="ada@example.com").count(), 1)
         self.assertEqual(Ticket.objects.count(), 2)
+
+
+class AttachmentTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin", email="admin@example.com", password="s3cret-pass", is_staff=True
+        )
+        self.client_obj = Client.objects.create(name="Ada Lovelace", email="ada@example.com")
+        self.ticket = Ticket.objects.create(
+            client=self.client_obj, title="Something broke", description="Details here."
+        )
+
+    def test_ticket_creation_with_valid_attachment_persists_and_is_returned(self):
+        url = reverse("public-ticket-create")
+        upload = SimpleUploadedFile("screenshot.png", b"fake-png-bytes", content_type="image/png")
+        payload = {
+            "name": "Ada Lovelace",
+            "email": "ada@example.com",
+            "title": "Dashboard fails to load",
+            "description": "It spins forever and never renders anything useful.",
+            "attachments": [upload],
+        }
+        resp = self.client.post(url, payload)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        ticket = Ticket.objects.get(token=resp.json()["token"])
+        self.assertEqual(Attachment.objects.filter(ticket=ticket).count(), 1)
+        self.assertEqual(len(resp.json()["attachments"]), 1)
+        self.assertEqual(resp.json()["attachments"][0]["kind"], "image")
+        self.assertEqual(resp.json()["attachments"][0]["name"], "screenshot.png")
+
+    def test_oversized_attachment_is_rejected(self):
+        url = reverse("public-ticket-create")
+        upload = SimpleUploadedFile(
+            "huge.png", b"x" * (6 * 1024 * 1024), content_type="image/png"
+        )
+        payload = {
+            "name": "Ada",
+            "email": "ada@example.com",
+            "title": "Something is wrong here",
+            "description": "This description is definitely long enough.",
+            "attachments": [upload],
+        }
+        resp = self.client.post(url, payload)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(Attachment.objects.count(), 0)
+
+    def test_disallowed_content_type_is_rejected(self):
+        url = reverse("public-ticket-create")
+        upload = SimpleUploadedFile(
+            "script.exe", b"MZ...", content_type="application/x-msdownload"
+        )
+        payload = {
+            "name": "Ada",
+            "email": "ada@example.com",
+            "title": "Something is wrong here",
+            "description": "This description is definitely long enough.",
+            "attachments": [upload],
+        }
+        resp = self.client.post(url, payload)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(Attachment.objects.count(), 0)
+
+    def test_admin_reply_attachment_persists_on_the_response_not_the_ticket(self):
+        self.client.login(username="admin", password="s3cret-pass")
+        url = reverse("admin-ticket-response-create", kwargs={"id": str(self.ticket.id)})
+        upload = SimpleUploadedFile("notes.txt", b"fix notes", content_type="text/plain")
+        resp = self.client.post(
+            url, {"message": "Here's what I found.", "notify_client": "true", "attachments": [upload]}
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        response_obj = Response.objects.get(id=resp.json()["id"])
+        attachment = Attachment.objects.get()
+        self.assertEqual(attachment.response_id, response_obj.id)
+        self.assertIsNone(attachment.ticket_id)
+        self.assertEqual(len(resp.json()["attachments"]), 1)
 
 
 class TicketTokenAccessTests(TestCase):

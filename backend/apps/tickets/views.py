@@ -8,6 +8,7 @@ from django.middleware.csrf import get_token
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, generics, status
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response as DRFResponse
 from rest_framework.views import APIView
@@ -18,11 +19,13 @@ from apps.tickets.permissions import IsAdminUser
 from apps.tickets.serializers import (
     AdminResponseCreateSerializer,
     ClientResponseCreateSerializer,
+    ResponseSerializer,
     TicketAdminDetailSerializer,
     TicketAdminListSerializer,
     TicketAdminUpdateSerializer,
     TicketCreateSerializer,
     TicketPublicSerializer,
+    create_attachments,
 )
 from apps.tickets.utils import extract_ticket_token, looks_like_email
 
@@ -38,6 +41,7 @@ class PublicTicketCreateView(generics.CreateAPIView):
     queryset = Ticket.objects.all()
     serializer_class = TicketCreateSerializer
     permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -48,7 +52,7 @@ class PublicTicketCreateView(generics.CreateAPIView):
             logger.exception("Ticket creation failed")
             raise
         logger.info("Ticket submitted id=%s token=%s", ticket.id, ticket.token)
-        out = TicketPublicSerializer(ticket)
+        out = TicketPublicSerializer(ticket, context={"request": request})
         return DRFResponse(out.data, status=status.HTTP_201_CREATED)
 
 
@@ -87,16 +91,8 @@ class PublicTicketResponseCreateView(APIView):
             message=serializer.validated_data["message"],
         )
         logger.info("Client response added ticket=%s response=%s", ticket.id, response_obj.id)
-        return DRFResponse(
-            {
-                "id": str(response_obj.id),
-                "author_type": response_obj.author_type,
-                "author": ticket.client.name,
-                "message": response_obj.message,
-                "created_at": response_obj.created_at,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        out = ResponseSerializer(response_obj, context={"request": request})
+        return DRFResponse(out.data, status=status.HTTP_201_CREATED)
 
 
 # --- Public: /track lookup + verification ---
@@ -253,17 +249,19 @@ class AdminTicketDetailView(generics.RetrieveUpdateAPIView):
         logger.info(
             "Ticket updated id=%s status=%s priority=%s", ticket.id, ticket.status, ticket.priority
         )
-        return DRFResponse(TicketAdminDetailSerializer(ticket).data)
+        return DRFResponse(TicketAdminDetailSerializer(ticket, context={"request": request}).data)
 
 
 class AdminTicketResponseCreateView(APIView):
     permission_classes = [IsAdminUser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request, id: str):
         ticket = get_object_or_404(Ticket, id=id)
         serializer = AdminResponseCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         notify_client = serializer.validated_data.get("notify_client", True)
+        files = serializer.validated_data.get("attachments", [])
 
         response_obj = Response(
             ticket=ticket,
@@ -272,20 +270,14 @@ class AdminTicketResponseCreateView(APIView):
         )
         response_obj._notify_client = notify_client
         response_obj.save()
+        create_attachments(files, response=response_obj)
 
         logger.info(
-            "Admin response added ticket=%s response=%s notify_client=%s",
+            "Admin response added ticket=%s response=%s notify_client=%s attachments=%d",
             ticket.id,
             response_obj.id,
             notify_client,
+            len(files),
         )
-        return DRFResponse(
-            {
-                "id": str(response_obj.id),
-                "author_type": response_obj.author_type,
-                "author": request.user.get_full_name() or request.user.username,
-                "message": response_obj.message,
-                "created_at": response_obj.created_at,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        out = ResponseSerializer(response_obj, context={"request": request})
+        return DRFResponse(out.data, status=status.HTTP_201_CREATED)

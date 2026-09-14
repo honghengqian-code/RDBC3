@@ -7,7 +7,6 @@ export interface CreateTicketInput {
   email: string;
   title: string;
   description: string;
-  /** Not yet persisted — Attachment storage is out of MVP scope, see CLAUDE.md 3.2. */
   attachments: File[];
 }
 
@@ -16,12 +15,22 @@ export interface CreateTicketResult {
   link: string;
 }
 
-// POST /api/public/tickets/
+// POST /api/public/tickets/ — multipart whenever there's at least one file, since a JSON
+// body can't carry raw File objects.
 export async function createTicket(input: CreateTicketInput): Promise<CreateTicketResult> {
-  const data = await apiFetch<{ token: string }>("/api/public/tickets/", {
-    method: "POST",
-    body: { name: input.name, email: input.email, title: input.title, description: input.description },
-  });
+  let body: unknown;
+  if (input.attachments.length > 0) {
+    const form = new FormData();
+    form.set("name", input.name);
+    form.set("email", input.email);
+    form.set("title", input.title);
+    form.set("description", input.description);
+    for (const file of input.attachments) form.append("attachments", file);
+    body = form;
+  } else {
+    body = { name: input.name, email: input.email, title: input.title, description: input.description };
+  }
+  const data = await apiFetch<{ token: string }>("/api/public/tickets/", { method: "POST", body });
   if (!data) throw new Error("Ticket creation returned no data.");
   return { token: data.token, link: `${window.location.origin}/tickets/${data.token}` };
 }

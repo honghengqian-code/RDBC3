@@ -1,5 +1,6 @@
 "use client";
 
+import { Pagination } from "@/components/admin/Pagination";
 import { TicketFilters } from "@/components/admin/TicketFilters";
 import { TicketTable } from "@/components/admin/TicketTable";
 import type { useTicketList } from "@/hooks/useTicketList";
@@ -7,7 +8,7 @@ import type { useTicketList } from "@/hooks/useTicketList";
 export function TicketListPanel({ list }: { list: ReturnType<typeof useTicketList> }) {
   return (
     <div className="flex flex-col gap-4">
-      <TicketFilters total={list.total} showing={list.tickets.length} />
+      <TicketFilters total={list.total} showing={list.matchingCount} />
 
       {list.status === "loading" && (
         <p className="text-sm text-[var(--muted)]">Loading tickets…</p>
@@ -33,7 +34,10 @@ export function TicketListPanel({ list }: { list: ReturnType<typeof useTicketLis
       )}
 
       {list.status === "ready" && list.tickets.length > 0 && (
-        <TicketTable tickets={list.tickets} onUpdate={list.patchTicket} />
+        <>
+          <TicketTable tickets={list.tickets} onUpdate={list.patchTicket} />
+          <Pagination count={list.matchingCount} />
+        </>
       )}
     </div>
   );

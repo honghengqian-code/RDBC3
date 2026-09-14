@@ -25,6 +25,7 @@ export interface TicketAttachment {
   name: string;
   size: number;
   kind: "image" | "file";
+  url: string;
 }
 
 export interface TicketResponse {
@@ -33,4 +34,5 @@ export interface TicketResponse {
   author: string;
   message: string;
   createdAt: string;
+  attachments: TicketAttachment[];
 }

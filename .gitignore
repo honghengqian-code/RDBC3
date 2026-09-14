@@ -4,6 +4,7 @@ backend/__pycache__/
 backend/**/__pycache__/
 backend/*.pyc
 backend/staticfiles/
+backend/media/
 backend/venv/
 backend/.venv/
 

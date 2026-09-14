@@ -56,9 +56,14 @@ export function useTicketDetail(id: string) {
   );
 
   const sendReply = useCallback(
-    async (message: string, notifyClient: boolean) => {
-      const response = await addAdminResponse(id, { message, notifyClient });
-      console.info("[useTicketDetail] reply sent", { id, responseId: response.id, notifyClient });
+    async (message: string, notifyClient: boolean, files: File[]) => {
+      const response = await addAdminResponse(id, { message, notifyClient, attachments: files });
+      console.info("[useTicketDetail] reply sent", {
+        id,
+        responseId: response.id,
+        notifyClient,
+        attachmentCount: files.length,
+      });
       setState((prev) =>
         prev.status === "ready" ? { ...prev, responses: [...prev.responses, response] } : prev,
       );

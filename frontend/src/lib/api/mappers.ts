@@ -15,6 +15,10 @@ interface BackendResponse {
   author: string;
   message: string;
   created_at: string;
+  // Already {id, name, size, kind, url} on the wire — AttachmentSerializer
+  // emits the same field names the frontend uses, so no snake_case mapping
+  // is needed for attachments specifically.
+  attachments: Ticket["attachments"];
 }
 
 export function mapResponse(json: BackendResponse): TicketResponse {
@@ -24,6 +28,7 @@ export function mapResponse(json: BackendResponse): TicketResponse {
     author: json.author,
     message: json.message,
     createdAt: json.created_at,
+    attachments: json.attachments,
   };
 }
 

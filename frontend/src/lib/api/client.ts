@@ -45,8 +45,11 @@ export interface ApiFetchOptions {
 /** Returns null on a 404 (the caller treats that as "not found", not an error); throws ApiError otherwise. */
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T | null> {
   const method = options.method ?? "GET";
+  const isFormData = options.body instanceof FormData;
   const headers: Record<string, string> = {};
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  // FormData bodies get no Content-Type here — the browser sets its own
+  // multipart boundary, and overriding it breaks the upload.
+  if (options.body !== undefined && !isFormData) headers["Content-Type"] = "application/json";
   if (UNSAFE_METHODS.has(method)) {
     const csrfToken = readCookie("csrftoken");
     if (csrfToken) headers["X-CSRFToken"] = csrfToken;
@@ -58,7 +61,8 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
       method,
       headers,
       credentials: "include",
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body:
+        options.body === undefined ? undefined : isFormData ? (options.body as FormData) : JSON.stringify(options.body),
     });
   } catch (error) {
     console.error("[apiFetch] network error", { path, method, error });

@@ -88,7 +88,29 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --- Attachments ---
+# Enforced server-side (apps/tickets/serializers.py), not just in the
+# frontend's AttachmentUploader — client-side validation is a UX nicety,
+# never a security boundary for file uploads.
+ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024  # 5MB, matches CLAUDE.md 2.2
+ATTACHMENT_MAX_COUNT = 5
+ATTACHMENT_ALLOWED_CONTENT_TYPES = [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "application/pdf",
+    "text/plain",
+    "text/csv",
+]
+# A handful of upload requests carrying up to ATTACHMENT_MAX_COUNT files at
+# ATTACHMENT_MAX_BYTES each can exceed Django's 2.5MB default in-memory cap.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 30 * 1024 * 1024
 
 # --- DRF ---
 REST_FRAMEWORK = {

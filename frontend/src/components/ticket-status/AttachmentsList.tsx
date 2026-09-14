@@ -23,12 +23,14 @@ export function AttachmentsList({ attachments }: { attachments: TicketAttachment
             <span className="shrink-0 text-xs tabular-nums text-[var(--muted)]">
               {formatBytes(f.size)}
             </span>
-            <button
-              type="button"
+            <a
+              href={f.url}
+              target="_blank"
+              rel="noopener noreferrer"
               className="btn-focus shrink-0 rounded px-2 py-1 text-xs font-semibold text-[var(--accent)]"
             >
               View
-            </button>
+            </a>
           </li>
         ))}
       </ul>

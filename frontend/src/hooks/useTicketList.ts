@@ -8,7 +8,7 @@ import type { Ticket } from "@/lib/types/ticket";
 type ListState =
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; tickets: Ticket[]; grandTotal: number };
+  | { status: "ready"; tickets: Ticket[]; matchingCount: number; grandTotal: number };
 
 export function useTicketList() {
   const searchParams = useSearchParams();
@@ -17,25 +17,38 @@ export function useTicketList() {
   const statusFilter = searchParams.get("status") ?? "All";
   const priorityFilter = searchParams.get("priority") ?? "All";
   const search = searchParams.get("search") ?? "";
+  const page = Math.max(1, Number(searchParams.get("page")) || 1);
   const hasFilter = statusFilter !== "All" || priorityFilter !== "All" || search !== "";
 
   const load = useCallback(async () => {
     setState({ status: "loading" });
     try {
-      // Fetch the filtered set and, only when a filter is active, the grand
-      // total too — that's what "Showing X of Y" (CLAUDE.md 2.2) needs; the
-      // unfiltered call is skipped when there's nothing to compare against.
-      const [tickets, grandTotal] = await Promise.all([
-        listTickets({ status: statusFilter, priority: priorityFilter, search }),
-        hasFilter ? listTickets({}).then((all) => all.length) : Promise.resolve(-1),
+      // The current page always comes from the server's real count for the active
+      // filter; the grand (unfiltered) total is only worth a second request when a
+      // filter is actually narrowing things — see CLAUDE.md 2.2's "Showing X of Y".
+      const [current, grand] = await Promise.all([
+        listTickets({ status: statusFilter, priority: priorityFilter, search, page }),
+        hasFilter ? listTickets({ page: 1 }) : Promise.resolve(null),
       ]);
-      console.info("[useTicketList] loaded", { count: tickets.length, statusFilter, priorityFilter, search });
-      setState({ status: "ready", tickets, grandTotal: hasFilter ? grandTotal : tickets.length });
+      console.info("[useTicketList] loaded", {
+        pageRows: current.tickets.length,
+        matchingCount: current.count,
+        statusFilter,
+        priorityFilter,
+        search,
+        page,
+      });
+      setState({
+        status: "ready",
+        tickets: current.tickets,
+        matchingCount: current.count,
+        grandTotal: hasFilter && grand ? grand.count : current.count,
+      });
     } catch (error) {
       console.error("[useTicketList] failed to load tickets", error);
       setState({ status: "error" });
     }
-  }, [statusFilter, priorityFilter, search, hasFilter]);
+  }, [statusFilter, priorityFilter, search, page, hasFilter]);
 
   useEffect(() => {
     load();
@@ -65,12 +78,15 @@ export function useTicketList() {
   );
 
   const tickets = state.status === "ready" ? state.tickets : [];
-  const total = state.status === "ready" ? state.grandTotal : tickets.length;
+  const total = state.status === "ready" ? state.grandTotal : 0;
+  const matchingCount = state.status === "ready" ? state.matchingCount : 0;
 
   return {
     status: state.status,
     tickets,
     total,
+    matchingCount,
+    page,
     patchTicket,
     refetch: load,
   };

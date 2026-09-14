@@ -1,3 +1,4 @@
+import { ResponseAttachmentChips } from "@/components/ticket-status/ResponseAttachmentChips";
 import { formatDateTime } from "@/lib/format";
 import type { TicketResponse } from "@/lib/types/ticket";
 
@@ -34,6 +35,7 @@ function MessageBubble({ response }: { response: TicketResponse }) {
         >
           {response.message}
         </div>
+        <ResponseAttachmentChips attachments={response.attachments} />
       </div>
     </div>
   );
