@@ -55,6 +55,9 @@ python manage.py makemigrations / migrate / createsuperuser / shell
 python manage.py test [apps.tickets]
 python manage.py seed_demo_data          # demo admin (admin@example.com / admin12345) + tickets
 python manage.py runserver 0.0.0.0:8000
+python manage.py changepassword <username>   # reset an existing admin's password — don't
+                                              # re-run createsuperuser with the same email
+                                              # (auth.User.email isn't unique; see §10)
 
 # Next.js (in frontend container)
 npm run dev | build | start | lint
@@ -174,6 +177,7 @@ Indices: `Ticket.token`, `Client.token`, `Client.email`, `Ticket.status`, `Ticke
 | GET | `/analytics/summary/` | Counts by status/priority, open-vs-closed, avg resolution time. |
 
 Admin auth mechanics: `POST /login/` looks up `auth.User` by email (`is_staff=True`), `authenticate()`/`login()`, then `get_token(request)` to set the CSRF cookie. Every subsequent `PATCH`/`POST` under `/api/admin/` must echo that cookie as `X-CSRFToken`.
+- `auth.User.email` has no unique constraint (Django's default), so two staff accounts can end up sharing one address — e.g. running `createsuperuser` twice for the same email instead of `changepassword`. The login view queries by email + `is_staff=True` and tries every match against the given password rather than assuming a single row, so a duplicate can't lock out every password for that address the way a plain `.get()` would; it logs a `WARNING` (`Multiple staff users share email=...`) when it happens so the duplicate gets noticed and cleaned up. Prefer `changepassword <username>` over re-running `createsuperuser` to avoid creating one.
 
 ## 11. Email Notification Flow
 
